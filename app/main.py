@@ -7,6 +7,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from app.adapters.inbound.api.teams import router as teams_router
+from app.adapters.inbound.api.xero import router as xero_router
 from app.core.errors import (
     ConnectionExpiredError,
     ConnectionMissingError,
@@ -115,6 +116,7 @@ async def lock_timeout_handler(
 # ── Routers ───────────────────────────────────────────────────────────────────
 
 app.include_router(teams_router)
+app.include_router(xero_router)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

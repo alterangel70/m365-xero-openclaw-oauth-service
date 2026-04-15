@@ -16,7 +16,16 @@ from app.adapters.outbound.ms_graph.client import MSGraphClient
 from app.adapters.outbound.ms_graph.token_manager import MSTokenManager
 from app.adapters.outbound.token_store.redis_idempotency_store import RedisIdempotencyStore
 from app.adapters.outbound.token_store.redis_token_store import RedisTokenStore
+from app.adapters.outbound.xero.client import XeroHttpClient
+from app.adapters.outbound.xero.oauth_client import XeroAuthlibOAuthClient
+from app.adapters.outbound.xero.token_manager import XeroTokenManager
 from app.core.use_cases.teams import SendTeamsApprovalCard, SendTeamsMessage
+from app.core.use_cases.xero import (
+    CreateXeroDraftInvoice,
+    GetXeroInvoice,
+    SubmitXeroInvoice,
+    VoidXeroInvoice,
+)
 from app.infrastructure.config import Settings, get_settings
 
 
@@ -98,6 +107,88 @@ def get_send_teams_approval_card(
 ) -> SendTeamsApprovalCard:
     return SendTeamsApprovalCard(
         teams_client=teams_client,
+        idempotency_store=idempotency_store,
+        idempotency_ttl_seconds=settings.idempotency_ttl_seconds,
+    )
+
+
+# ── Xero ──────────────────────────────────────────────────────────────────────
+
+
+def get_xero_oauth_client(
+    http_client=Depends(get_http_client),
+    settings: Settings = Depends(get_settings),
+) -> XeroAuthlibOAuthClient:
+    return XeroAuthlibOAuthClient(
+        client_id=settings.xero_client_id,
+        client_secret=settings.xero_client_secret,
+        redirect_uri=settings.xero_redirect_uri,
+        scopes=settings.xero_scopes,
+        http_client=http_client,
+    )
+
+
+def get_xero_token_manager(
+    token_store: RedisTokenStore = Depends(get_token_store),
+    lock_manager: RedisLockManager = Depends(get_lock_manager),
+    oauth_client: XeroAuthlibOAuthClient = Depends(get_xero_oauth_client),
+    settings: Settings = Depends(get_settings),
+) -> XeroTokenManager:
+    return XeroTokenManager(
+        token_store=token_store,
+        lock_manager=lock_manager,
+        oauth_client=oauth_client,
+        refresh_buffer_seconds=settings.refresh_buffer_seconds,
+    )
+
+
+def get_xero_client(
+    token_manager: XeroTokenManager = Depends(get_xero_token_manager),
+    http_client=Depends(get_http_client),
+) -> XeroHttpClient:
+    return XeroHttpClient(token_manager=token_manager, http_client=http_client)
+
+
+# ── Xero use cases ────────────────────────────────────────────────────────────
+
+
+def get_create_xero_draft_invoice(
+    xero_client: XeroHttpClient = Depends(get_xero_client),
+    idempotency_store: RedisIdempotencyStore = Depends(get_idempotency_store),
+    settings: Settings = Depends(get_settings),
+) -> CreateXeroDraftInvoice:
+    return CreateXeroDraftInvoice(
+        xero_client=xero_client,
+        idempotency_store=idempotency_store,
+        idempotency_ttl_seconds=settings.idempotency_ttl_seconds,
+    )
+
+
+def get_submit_xero_invoice(
+    xero_client: XeroHttpClient = Depends(get_xero_client),
+    idempotency_store: RedisIdempotencyStore = Depends(get_idempotency_store),
+    settings: Settings = Depends(get_settings),
+) -> SubmitXeroInvoice:
+    return SubmitXeroInvoice(
+        xero_client=xero_client,
+        idempotency_store=idempotency_store,
+        idempotency_ttl_seconds=settings.idempotency_ttl_seconds,
+    )
+
+
+def get_get_xero_invoice(
+    xero_client: XeroHttpClient = Depends(get_xero_client),
+) -> GetXeroInvoice:
+    return GetXeroInvoice(xero_client=xero_client)
+
+
+def get_void_xero_invoice(
+    xero_client: XeroHttpClient = Depends(get_xero_client),
+    idempotency_store: RedisIdempotencyStore = Depends(get_idempotency_store),
+    settings: Settings = Depends(get_settings),
+) -> VoidXeroInvoice:
+    return VoidXeroInvoice(
+        xero_client=xero_client,
         idempotency_store=idempotency_store,
         idempotency_ttl_seconds=settings.idempotency_ttl_seconds,
     )
