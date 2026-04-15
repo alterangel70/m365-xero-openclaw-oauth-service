@@ -1,0 +1,9 @@
+# Test-only dependencies.  Not installed in the production Docker image.
+# Install locally with: pip install -r requirements-test.txt
+
+# Test runner
+pytest>=8.3.0
+pytest-asyncio>=0.25.0
+
+# In-process fake Redis — no running Redis required for unit tests
+fakeredis>=2.26.0
