@@ -1,0 +1,43 @@
+services:
+
+  app:
+    build: .
+    ports:
+      # Publish the app to the host so OpenClaw (which runs outside Docker) can reach it.
+      # Put a TLS-terminating reverse proxy in front in production.
+      - "8000:8000"
+    volumes:
+      # Bind mount for local development: code changes are picked up without a rebuild.
+      # In production, remove this volume and bake the code into the image.
+      - ./app:/app/app
+    env_file:
+      - .env
+    # --reload watches for file changes; enabled here for development.
+    # In production, remove --reload and the bind mount above.
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - integration_net
+
+  redis:
+    image: redis:7-alpine
+    # AOF persistence so tokens survive normal restarts.
+    command: redis-server --appendonly yes
+    volumes:
+      # Persist Redis data on the host.  The directory is created automatically.
+      - ./data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    # Redis is intentionally NOT port-published to the host.
+    # It is reachable only from within integration_net.
+    networks:
+      - integration_net
+
+networks:
+  integration_net:
+    driver: bridge

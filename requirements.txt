@@ -1,0 +1,19 @@
+# Web framework and server
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+
+# Configuration
+pydantic-settings>=2.7.0
+python-dotenv>=1.0.0
+
+# Async Redis client (hiredis is a fast C parser for Redis responses)
+redis[hiredis]>=5.2.0
+
+# HTTP client for outbound provider calls (used from Phase 5 onward)
+httpx>=0.28.0
+
+# OAuth 2.0 / OIDC client (used from Phase 5 onward)
+authlib>=1.4.0
+
+# Required by FastAPI for multipart form parsing
+python-multipart>=0.0.9
