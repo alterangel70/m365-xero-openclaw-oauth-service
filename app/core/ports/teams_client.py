@@ -1,22 +1,22 @@
 from abc import ABC, abstractmethod
 
+from app.core.domain.teams import TeamsApprovalCard, TeamsMessage
+
 
 class AbstractTeamsClient(ABC):
     """Port for outbound Microsoft Teams / Graph API calls.
 
-    Token acquisition and refresh are fully encapsulated within the adapter
-    implementation (MSGraphClient).  Callers pass only the connection_id;
-    the adapter resolves and manages the access token internally.
+    Both methods accept domain objects so the serialization to provider wire
+    format is fully encapsulated inside the adapter implementation.
+    Token acquisition and refresh are also encapsulated; callers never handle
+    credentials directly.
     """
 
     @abstractmethod
     async def send_message(
         self,
         connection_id: str,
-        team_id: str,
-        channel_id: str,
-        body: str,
-        content_type: str,
+        message: TeamsMessage,
     ) -> dict:
         """Send a plain text or HTML message to a Teams channel.
 
@@ -28,13 +28,12 @@ class AbstractTeamsClient(ABC):
     async def send_adaptive_card(
         self,
         connection_id: str,
-        team_id: str,
-        channel_id: str,
-        card_payload: dict,
+        card: TeamsApprovalCard,
     ) -> dict:
         """Send an Adaptive Card to a Teams channel.
 
-        card_payload is the full Adaptive Card JSON as a Python dict.
+        The adapter is responsible for serializing the domain object to the
+        provider's wire format (Graph chatMessage + Adaptive Card JSON).
         Returns the raw Graph API response body as a dict.
         Raises ProviderUnavailableError on unrecoverable provider errors.
         """

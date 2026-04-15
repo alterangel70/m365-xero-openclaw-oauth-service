@@ -1,0 +1,103 @@
+"""
+FastAPI dependency injection wiring.
+
+Each function constructs one collaborator from its dependencies.
+All state lives either in app.state (Redis pool, httpx client) or is
+instantiated fresh per request (lightweight wrappers with no internal state).
+
+Nothing in this module reaches into provider adapters directly; it only
+assembles already-implemented classes and passes them through the DI chain.
+"""
+
+from fastapi import Depends, Request
+
+from app.adapters.outbound.lock.redis_lock import RedisLockManager
+from app.adapters.outbound.ms_graph.client import MSGraphClient
+from app.adapters.outbound.ms_graph.token_manager import MSTokenManager
+from app.adapters.outbound.token_store.redis_idempotency_store import RedisIdempotencyStore
+from app.adapters.outbound.token_store.redis_token_store import RedisTokenStore
+from app.core.use_cases.teams import SendTeamsApprovalCard, SendTeamsMessage
+from app.infrastructure.config import Settings, get_settings
+
+
+# ── Shared infrastructure ─────────────────────────────────────────────────────
+
+
+def get_redis(request: Request):
+    """Return the async Redis client stored on app.state by the lifespan."""
+    return request.app.state.redis
+
+
+def get_http_client(request: Request):
+    """Return the shared httpx.AsyncClient stored on app.state by the lifespan."""
+    return request.app.state.http_client
+
+
+# ── Redis-backed adapters ─────────────────────────────────────────────────────
+
+
+def get_token_store(redis=Depends(get_redis)) -> RedisTokenStore:
+    return RedisTokenStore(redis)
+
+
+def get_lock_manager(redis=Depends(get_redis)) -> RedisLockManager:
+    return RedisLockManager(redis)
+
+
+def get_idempotency_store(redis=Depends(get_redis)) -> RedisIdempotencyStore:
+    return RedisIdempotencyStore(redis)
+
+
+# ── Microsoft Graph ───────────────────────────────────────────────────────────
+
+
+def get_ms_token_manager(
+    token_store: RedisTokenStore = Depends(get_token_store),
+    lock_manager: RedisLockManager = Depends(get_lock_manager),
+    http_client=Depends(get_http_client),
+    settings: Settings = Depends(get_settings),
+) -> MSTokenManager:
+    return MSTokenManager(
+        token_store=token_store,
+        lock_manager=lock_manager,
+        http_client=http_client,
+        tenant_id=settings.ms_tenant_id,
+        client_id=settings.ms_client_id,
+        client_secret=settings.ms_client_secret,
+        scopes=settings.ms_graph_scopes,
+        refresh_buffer_seconds=settings.refresh_buffer_seconds,
+    )
+
+
+def get_teams_client(
+    token_manager: MSTokenManager = Depends(get_ms_token_manager),
+    http_client=Depends(get_http_client),
+) -> MSGraphClient:
+    return MSGraphClient(token_manager=token_manager, http_client=http_client)
+
+
+# ── Teams use cases ───────────────────────────────────────────────────────────
+
+
+def get_send_teams_message(
+    teams_client: MSGraphClient = Depends(get_teams_client),
+    idempotency_store: RedisIdempotencyStore = Depends(get_idempotency_store),
+    settings: Settings = Depends(get_settings),
+) -> SendTeamsMessage:
+    return SendTeamsMessage(
+        teams_client=teams_client,
+        idempotency_store=idempotency_store,
+        idempotency_ttl_seconds=settings.idempotency_ttl_seconds,
+    )
+
+
+def get_send_teams_approval_card(
+    teams_client: MSGraphClient = Depends(get_teams_client),
+    idempotency_store: RedisIdempotencyStore = Depends(get_idempotency_store),
+    settings: Settings = Depends(get_settings),
+) -> SendTeamsApprovalCard:
+    return SendTeamsApprovalCard(
+        teams_client=teams_client,
+        idempotency_store=idempotency_store,
+        idempotency_ttl_seconds=settings.idempotency_ttl_seconds,
+    )

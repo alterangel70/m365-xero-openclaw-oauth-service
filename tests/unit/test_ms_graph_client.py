@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, call
 import pytest
 
 from app.adapters.outbound.ms_graph.client import MSGraphClient
+from app.core.domain.teams import TeamsApprovalCard, TeamsMessage
 from app.core.errors import ProviderUnavailableError
 
 
@@ -24,6 +25,34 @@ CHANNEL_ID = "channel-xyz"
 CONNECTION_ID = "ms-default"
 FAKE_TOKEN = "fake_bearer_token"
 MESSAGE_ID = "msg-001"
+
+
+def _make_message(
+    body_content: str = "Hello",
+    content_type: str = "text",
+) -> TeamsMessage:
+    return TeamsMessage(
+        team_id=TEAM_ID,
+        channel_id=CHANNEL_ID,
+        body_content=body_content,
+        content_type=content_type,
+    )
+
+
+def _make_card(
+    title: str = "Approve invoice?",
+    description: str = "Please review.",
+    metadata: dict | None = None,
+) -> TeamsApprovalCard:
+    return TeamsApprovalCard(
+        team_id=TEAM_ID,
+        channel_id=CHANNEL_ID,
+        title=title,
+        description=description,
+        approve_url="https://example.com/approve",
+        reject_url="https://example.com/reject",
+        metadata=metadata or {},
+    )
 
 
 def _success_response(body: dict | None = None) -> MagicMock:
@@ -64,16 +93,14 @@ def graph_client(mock_token_manager, mock_http):
 # ── send_message ──────────────────────────────────────────────────────────────
 
 async def test_send_message_calls_correct_endpoint(graph_client, mock_http):
-    await graph_client.send_message(
-        CONNECTION_ID, TEAM_ID, CHANNEL_ID, "Hello", "text"
-    )
+    await graph_client.send_message(CONNECTION_ID, _make_message())
     call_args = mock_http.post.call_args
     assert f"/teams/{TEAM_ID}/channels/{CHANNEL_ID}/messages" in call_args.args[0]
 
 
 async def test_send_message_passes_correct_body(graph_client, mock_http):
     await graph_client.send_message(
-        CONNECTION_ID, TEAM_ID, CHANNEL_ID, "<b>Hi</b>", "html"
+        CONNECTION_ID, _make_message(body_content="<b>Hi</b>", content_type="html")
     )
     payload = mock_http.post.call_args.kwargs["json"]
     assert payload["body"]["contentType"] == "html"
@@ -81,37 +108,27 @@ async def test_send_message_passes_correct_body(graph_client, mock_http):
 
 
 async def test_send_message_includes_bearer_auth(graph_client, mock_http):
-    await graph_client.send_message(
-        CONNECTION_ID, TEAM_ID, CHANNEL_ID, "Hello", "text"
-    )
+    await graph_client.send_message(CONNECTION_ID, _make_message())
     headers = mock_http.post.call_args.kwargs["headers"]
     assert headers["Authorization"] == f"Bearer {FAKE_TOKEN}"
 
 
 async def test_send_message_returns_response_body(graph_client):
-    result = await graph_client.send_message(
-        CONNECTION_ID, TEAM_ID, CHANNEL_ID, "Hello", "text"
-    )
+    result = await graph_client.send_message(CONNECTION_ID, _make_message())
     assert result["id"] == MESSAGE_ID
 
 
 # ── send_adaptive_card ────────────────────────────────────────────────────────
 
 async def test_send_adaptive_card_body_has_attachment_placeholder(graph_client, mock_http):
-    card = {"type": "AdaptiveCard", "version": "1.4", "body": []}
-    await graph_client.send_adaptive_card(
-        CONNECTION_ID, TEAM_ID, CHANNEL_ID, card
-    )
+    await graph_client.send_adaptive_card(CONNECTION_ID, _make_card())
     payload = mock_http.post.call_args.kwargs["json"]
     assert payload["body"]["contentType"] == "html"
     assert "<attachment id=" in payload["body"]["content"]
 
 
 async def test_send_adaptive_card_has_correct_attachment_structure(graph_client, mock_http):
-    card = {"type": "AdaptiveCard", "version": "1.4", "body": []}
-    await graph_client.send_adaptive_card(
-        CONNECTION_ID, TEAM_ID, CHANNEL_ID, card
-    )
+    await graph_client.send_adaptive_card(CONNECTION_ID, _make_card())
     payload = mock_http.post.call_args.kwargs["json"]
     assert len(payload["attachments"]) == 1
 
@@ -124,10 +141,7 @@ async def test_send_adaptive_card_has_correct_attachment_structure(graph_client,
 
 async def test_send_adaptive_card_serialises_content_as_string(graph_client, mock_http):
     """Graph requires card content as a JSON string, not a nested dict."""
-    card = {"type": "AdaptiveCard", "version": "1.4", "body": [{"type": "TextBlock", "text": "Hi"}]}
-    await graph_client.send_adaptive_card(
-        CONNECTION_ID, TEAM_ID, CHANNEL_ID, card
-    )
+    await graph_client.send_adaptive_card(CONNECTION_ID, _make_card())
     payload = mock_http.post.call_args.kwargs["json"]
     content = payload["attachments"][0]["content"]
     assert isinstance(content, str)
@@ -147,9 +161,7 @@ async def test_graph_401_triggers_force_refresh_and_retry(
         _success_response(),    # retry after force refresh
     ]
 
-    result = await graph_client.send_message(
-        CONNECTION_ID, TEAM_ID, CHANNEL_ID, "Hello", "text"
-    )
+    result = await graph_client.send_message(CONNECTION_ID, _make_message())
 
     assert result["id"] == MESSAGE_ID
     assert mock_http.post.call_count == 2
@@ -167,9 +179,7 @@ async def test_graph_401_on_retry_raises_provider_unavailable(graph_client, mock
     ]
 
     with pytest.raises(ProviderUnavailableError):
-        await graph_client.send_message(
-            CONNECTION_ID, TEAM_ID, CHANNEL_ID, "Hello", "text"
-        )
+        await graph_client.send_message(CONNECTION_ID, _make_message())
 
 
 async def test_graph_5xx_raises_provider_unavailable(graph_client, mock_http):
@@ -179,9 +189,7 @@ async def test_graph_5xx_raises_provider_unavailable(graph_client, mock_http):
     mock_http.post.return_value = _error_response(503)
 
     with pytest.raises(ProviderUnavailableError):
-        await graph_client.send_message(
-            CONNECTION_ID, TEAM_ID, CHANNEL_ID, "Hello", "text"
-        )
+        await graph_client.send_message(CONNECTION_ID, _make_message())
 
     assert mock_http.post.call_count == 1
 
@@ -190,8 +198,6 @@ async def test_graph_403_raises_provider_unavailable_without_retry(graph_client,
     mock_http.post.return_value = _error_response(403)
 
     with pytest.raises(ProviderUnavailableError):
-        await graph_client.send_message(
-            CONNECTION_ID, TEAM_ID, CHANNEL_ID, "Hello", "text"
-        )
+        await graph_client.send_message(CONNECTION_ID, _make_message())
 
     assert mock_http.post.call_count == 1

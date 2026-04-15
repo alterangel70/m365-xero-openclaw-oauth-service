@@ -18,9 +18,11 @@ import uuid
 
 import httpx
 
+from app.core.domain.teams import TeamsApprovalCard, TeamsMessage
 from app.core.errors import ProviderUnavailableError
 from app.core.ports.teams_client import AbstractTeamsClient
 
+from .card_builder import build_approval_card
 from .token_manager import MSTokenManager
 
 logger = logging.getLogger(__name__)
@@ -45,30 +47,35 @@ class MSGraphClient(AbstractTeamsClient):
     async def send_message(
         self,
         connection_id: str,
-        team_id: str,
-        channel_id: str,
-        body: str,
-        content_type: str,
+        message: TeamsMessage,
     ) -> dict:
         """Send a plain text or HTML message to a Teams channel."""
-        payload = {"body": {"contentType": content_type, "content": body}}
-        return await self._post_to_channel(connection_id, team_id, channel_id, payload)
+        payload = {
+            "body": {
+                "contentType": message.content_type,
+                "content": message.body_content,
+            }
+        }
+        return await self._post_to_channel(
+            connection_id, message.team_id, message.channel_id, payload
+        )
 
     async def send_adaptive_card(
         self,
         connection_id: str,
-        team_id: str,
-        channel_id: str,
-        card_payload: dict,
+        card: TeamsApprovalCard,
     ) -> dict:
         """Send an Adaptive Card to a Teams channel.
 
-        The card is wrapped in a Graph chatMessage attachment.  A unique
-        attachment ID ties the HTML placeholder in the body to the actual
-        card content in the attachments list — this is the format required
-        by the Graph channelMessage API.
+        The card domain object is serialized to Adaptive Card JSON by
+        card_builder.build_approval_card(), then wrapped in the Graph
+        chatMessage attachment structure required by the API.
+
+        A unique attachment ID ties the HTML placeholder in the message body
+        to the actual card content in the attachments list.
         """
         attachment_id = str(uuid.uuid4())
+        card_json = build_approval_card(card)
         payload = {
             "body": {
                 "contentType": "html",
@@ -81,11 +88,13 @@ class MSGraphClient(AbstractTeamsClient):
                     "contentType": "application/vnd.microsoft.card.adaptive",
                     "contentUrl": None,
                     # Graph expects the Adaptive Card JSON as a string, not a dict.
-                    "content": json.dumps(card_payload),
+                    "content": json.dumps(card_json),
                 }
             ],
         }
-        return await self._post_to_channel(connection_id, team_id, channel_id, payload)
+        return await self._post_to_channel(
+            connection_id, card.team_id, card.channel_id, payload
+        )
 
     async def _post_to_channel(
         self,

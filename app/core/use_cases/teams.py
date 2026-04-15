@@ -16,6 +16,10 @@ from app.core.use_cases.results import MessageResult
 
 logger = logging.getLogger(__name__)
 
+# Stable operation name prefixes used as part of the idempotency Redis key.
+_OP_SEND_MESSAGE = "send_teams_message"
+_OP_SEND_APPROVAL = "send_teams_approval_card"
+
 
 class SendTeamsMessage:
     """Send a plain text or HTML message to a Teams channel.
@@ -40,7 +44,32 @@ class SendTeamsMessage:
         message: TeamsMessage,
         idempotency_key: str | None = None,
     ) -> MessageResult:
-        raise NotImplementedError
+        idem_key = (
+            f"idempotency:{_OP_SEND_MESSAGE}:{idempotency_key}"
+            if idempotency_key
+            else None
+        )
+
+        if idem_key:
+            cached = await self._idempotency_store.get(idem_key)
+            if cached:
+                logger.debug("Idempotency cache hit for key %r", idempotency_key)
+                return MessageResult(message_id=cached["message_id"])
+
+        response = await self._teams_client.send_message(
+            connection_id=connection_id,
+            message=message,
+        )
+        result = MessageResult(message_id=response["id"])
+
+        if idem_key:
+            await self._idempotency_store.set(
+                idem_key,
+                {"message_id": result.message_id},
+                self._idempotency_ttl_seconds,
+            )
+
+        return result
 
 
 class SendTeamsApprovalCard:
@@ -67,4 +96,29 @@ class SendTeamsApprovalCard:
         card: TeamsApprovalCard,
         idempotency_key: str | None = None,
     ) -> MessageResult:
-        raise NotImplementedError
+        idem_key = (
+            f"idempotency:{_OP_SEND_APPROVAL}:{idempotency_key}"
+            if idempotency_key
+            else None
+        )
+
+        if idem_key:
+            cached = await self._idempotency_store.get(idem_key)
+            if cached:
+                logger.debug("Idempotency cache hit for key %r", idempotency_key)
+                return MessageResult(message_id=cached["message_id"])
+
+        response = await self._teams_client.send_adaptive_card(
+            connection_id=connection_id,
+            card=card,
+        )
+        result = MessageResult(message_id=response["id"])
+
+        if idem_key:
+            await self._idempotency_store.set(
+                idem_key,
+                {"message_id": result.message_id},
+                self._idempotency_ttl_seconds,
+            )
+
+        return result
