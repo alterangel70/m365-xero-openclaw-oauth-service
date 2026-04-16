@@ -3,9 +3,11 @@ from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
 import httpx
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.adapters.inbound.api.middleware import RequestIdMiddleware
 from app.adapters.inbound.api.oauth import router as oauth_router
 from app.adapters.inbound.api.teams import router as teams_router
 from app.adapters.inbound.api.xero import router as xero_router
@@ -16,17 +18,10 @@ from app.core.errors import (
     ProviderUnavailableError,
 )
 from app.infrastructure.config import get_settings
+from app.infrastructure.logging import configure_logging
 from app.infrastructure.redis_client import create_redis_pool
 
 logger = logging.getLogger(__name__)
-
-
-def _configure_logging(log_level: str) -> None:
-    logging.basicConfig(
-        level=log_level,
-        format="%(asctime)s %(levelname)-8s %(name)s  %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
-    )
 
 
 @asynccontextmanager
@@ -39,7 +34,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
       - clean them up on shutdown
     """
     settings = get_settings()
-    _configure_logging(settings.log_level)
+    configure_logging(settings)
     logger.info("Starting M365-Xero-OpenClaw integration service")
 
     app.state.redis = await create_redis_pool()
@@ -69,9 +64,51 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# RequestIdMiddleware must be registered last so it wraps the entire stack:
+# it runs first on every inbound request and last on every outbound response.
+app.add_middleware(RequestIdMiddleware)
 
-# ── Domain error handlers ─────────────────────────────────────────────────────
-# Map application-layer exceptions to the agreed error envelope and HTTP status.
+
+# ── HTTP error handlers ───────────────────────────────────────────────────────
+# Normalize FastAPI / Starlette HTTP errors to the agreed error envelope.
+
+_STATUS_TO_ERROR: dict[int, str] = {
+    400: "bad_request",
+    401: "unauthorized",
+    403: "forbidden",
+    404: "not_found",
+    405: "method_not_allowed",
+    409: "conflict",
+    422: "validation_error",
+    429: "too_many_requests",
+    500: "internal_error",
+    502: "bad_gateway",
+    503: "service_unavailable",
+}
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(
+    request: Request, exc: HTTPException
+) -> JSONResponse:
+    error_code = _STATUS_TO_ERROR.get(exc.status_code, "http_error")
+    detail = exc.detail if isinstance(exc.detail, str) else str(exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": error_code, "detail": detail},
+    )
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    errors = exc.errors()
+    detail = errors[0]["msg"] if errors else "Request validation failed"
+    return JSONResponse(
+        status_code=422,
+        content={"error": "validation_error", "detail": detail},
+    )
 
 
 @app.exception_handler(ConnectionMissingError)
@@ -127,9 +164,23 @@ app.include_router(oauth_router)
 @app.get("/health", tags=["health"])
 async def health(request: Request) -> JSONResponse:
     """
-    Shallow health check.  Verifies the app is running and that the Redis
-    connection is reachable.  Does not check external providers.
+    Liveness + dependency health check.
+
+    Probes:
+      * **redis**    – PING to the Redis connection pool.
+      * **ms_graph** – client_credentials token request to the MS token
+                       endpoint (5-second timeout); validates connectivity
+                       and that the app credentials are accepted.
+
+    Response shape::
+
+        {"status": "ok" | "degraded",
+         "redis":    "ok" | "error",
+         "ms_graph": "ok" | "error"}
     """
+    settings = get_settings()
+
+    # ── Redis probe ───────────────────────────────────────────────────────────
     try:
         await request.app.state.redis.ping()
         redis_status = "ok"
@@ -137,4 +188,39 @@ async def health(request: Request) -> JSONResponse:
         logger.exception("Redis ping failed during health check")
         redis_status = "error"
 
-    return JSONResponse({"status": "ok", "redis": redis_status})
+    # ── MS Graph probe ────────────────────────────────────────────────────────
+    # A lightweight client_credentials token request validates that the MS
+    # tenant / client credentials are correct and the endpoint is reachable.
+    ms_graph_status: str
+    try:
+        token_url = (
+            f"https://login.microsoftonline.com/{settings.ms_tenant_id}"
+            "/oauth2/v2.0/token"
+        )
+        resp = await request.app.state.http_client.post(
+            token_url,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": settings.ms_client_id,
+                "client_secret": settings.ms_client_secret,
+                "scope": settings.ms_graph_scopes,
+            },
+            timeout=5.0,
+        )
+        ms_graph_status = "ok" if resp.status_code == 200 else "error"
+    except Exception:
+        logger.exception("MS Graph health check failed")
+        ms_graph_status = "error"
+
+    overall = (
+        "degraded"
+        if any(s == "error" for s in (redis_status, ms_graph_status))
+        else "ok"
+    )
+    return JSONResponse(
+        {
+            "status": overall,
+            "redis": redis_status,
+            "ms_graph": ms_graph_status,
+        }
+    )

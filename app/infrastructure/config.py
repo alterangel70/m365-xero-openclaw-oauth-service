@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     idempotency_ttl_seconds: int = 86400
     log_level: str = "INFO"
 
+    # ── Seq (structured logging) ─────────────────────────────────────────────
+    # When seq_enabled=true the app ships log events to the Seq ingest endpoint.
+    # All four variables are optional; Seq integration is off by default.
+    seq_enabled: bool = False
+    seq_url: str = ""
+    seq_api_key: str = ""
+    seq_min_level: str = "INFO"
+
     # ── Security ──────────────────────────────────────────────────────────────
     internal_api_key: str
 
@@ -54,6 +62,15 @@ class Settings(BaseSettings):
         allowed = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
         if upper not in allowed:
             raise ValueError(f"log_level must be one of {allowed}, got {v!r}")
+        return upper
+
+    @field_validator("seq_min_level", mode="before")
+    @classmethod
+    def normalise_seq_min_level(cls, v: str) -> str:
+        upper = v.strip().upper()
+        allowed = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+        if upper not in allowed:
+            raise ValueError(f"seq_min_level must be one of {allowed}, got {v!r}")
         return upper
 
 

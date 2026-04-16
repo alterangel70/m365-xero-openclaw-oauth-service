@@ -17,3 +17,6 @@ authlib>=1.4.0
 
 # Required by FastAPI for multipart form parsing
 python-multipart>=0.0.9
+
+# Structured logging handler for Seq
+seqlog>=0.3.24
