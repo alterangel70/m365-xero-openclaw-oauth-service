@@ -1,0 +1,56 @@
+# docker-compose.test.yml
+#
+# Runs the integration test suite against a real Redis container.
+#
+# Usage:
+#   docker compose -f docker-compose.test.yml run --rm integration-tests
+#
+# The test runner container:
+#   - inherits the same app image (which includes all runtime deps)
+#   - installs test-only dependencies at runtime via requirements-test.txt
+#   - binds the local source tree so tests always reflect current code
+#   - connects to the redis service defined below
+#
+# Environment variables for the app come from .env via env_file.
+# Override individual vars with -e on the docker compose run command or by
+# setting them in the shell environment before running docker compose.
+
+services:
+
+  integration-tests:
+    build: .
+    entrypoint: sh
+    command: >
+      -c "pip install -q -r requirements-test.txt &&
+          pytest tests/integration -v"
+    volumes:
+      - ./app:/app/app
+      - ./tests:/app/tests
+      - ./pytest.ini:/app/pytest.ini
+      - ./requirements-test.txt:/app/requirements-test.txt
+    env_file:
+      - .env
+    environment:
+      # Point at the Redis service defined in this file, not the dev one.
+      REDIS_URL: redis://redis-test:6379/0
+      # Disable Seq during tests; log to stdout only.
+      SEQ_ENABLED: "false"
+    depends_on:
+      redis-test:
+        condition: service_healthy
+    networks:
+      - test_net
+
+  redis-test:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 3s
+      timeout: 2s
+      retries: 10
+    networks:
+      - test_net
+
+networks:
+  test_net:
+    driver: bridge
