@@ -56,3 +56,12 @@ class DeviceCodeResult:
     expires_in: int
     interval: int
     message: str
+
+
+@dataclass(frozen=True)
+class XeroContactResult:
+    """A single Xero contact returned by the list contacts use case."""
+
+    contact_id: str
+    name: str
+    email: str | None

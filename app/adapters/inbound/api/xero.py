@@ -15,8 +15,8 @@ POST /v1/xero/invoices/{invoice_id}/submit
 POST /v1/xero/invoices/{invoice_id}/void
     Void an invoice.  Idempotency-Key header is mandatory.
 
-GET /v1/xero/invoices/{invoice_id}
-    Fetch the current state of an invoice.  No idempotency key needed.
+GET /v1/xero/contacts
+    List contacts, optionally filtered by name.
 """
 
 from __future__ import annotations
@@ -31,6 +31,7 @@ from pydantic import BaseModel, Field
 from app.adapters.inbound.api.dependencies import (
     get_create_xero_draft_invoice,
     get_get_xero_invoice,
+    get_list_xero_contacts,
     get_submit_xero_invoice,
     get_void_xero_invoice,
 )
@@ -39,6 +40,7 @@ from app.core.domain.xero import XeroInvoice, XeroLineItem
 from app.core.use_cases.xero import (
     CreateXeroDraftInvoice,
     GetXeroInvoice,
+    ListXeroContacts,
     SubmitXeroInvoice,
     VoidXeroInvoice,
 )
@@ -79,6 +81,16 @@ class InvoiceActionRequest(BaseModel):
 class InvoiceResponse(BaseModel):
     invoice_id: str
     status: str
+
+
+class ContactResponse(BaseModel):
+    contact_id: str
+    name: str
+    email: str | None = None
+
+
+class ContactListResponse(BaseModel):
+    contacts: list[ContactResponse]
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -190,3 +202,23 @@ async def void_invoice(
         idempotency_key=idempotency_key,
     )
     return InvoiceResponse(invoice_id=result.invoice_id, status=result.status)
+
+
+@router.get("/contacts", response_model=ContactListResponse)
+async def list_contacts(
+    connection_id: str,
+    search: str | None = None,
+    use_case: ListXeroContacts = Depends(get_list_xero_contacts),
+) -> ContactListResponse:
+    """List Xero contacts, optionally filtered by name.
+
+    Pass ?search=Acme to filter contacts whose name contains the search term.
+    Returns contact_id, name and email for each match.
+    """
+    results = await use_case.execute(connection_id=connection_id, search=search)
+    return ContactListResponse(
+        contacts=[
+            ContactResponse(contact_id=r.contact_id, name=r.name, email=r.email)
+            for r in results
+        ]
+    )

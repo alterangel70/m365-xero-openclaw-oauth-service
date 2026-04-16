@@ -6,6 +6,10 @@ A FastAPI microservice that allows OpenClaw to:
 
 All provider tokens are managed internally. OpenClaw interacts with this service only via a static API key; it never handles OAuth flows or provider tokens directly.
 
+**Microsoft** uses the OAuth 2.0 **Device Code Flow** (delegated, on behalf of a user). A one-time operator authorization is required; the service then auto-refreshes the token silently.
+
+**Xero** uses OAuth 2.0 **Authorization Code** with rotating refresh tokens. A one-time operator browser-based consent is required per Xero organization.
+
 ---
 
 ## Technologies
@@ -67,8 +71,11 @@ Authorization: Bearer <INTERNAL_API_KEY>
 | `GET` | `/v1/xero/invoices/{id}` | Fetch a Xero invoice |
 | `POST` | `/v1/xero/invoices/{id}/submit` | Transition invoice to AUTHORISED |
 | `POST` | `/v1/xero/invoices/{id}/void` | Void an invoice |
+| `GET` | `/v1/xero/contacts` | List Xero contacts (optional `?search=` filter) |
 | `GET` | `/v1/oauth/xero/authorize` | Begin Xero OAuth flow (returns redirect URL) |
 | `GET` | `/v1/oauth/xero/callback` | Xero OAuth redirect target (no API key) |
+| `POST` | `/v1/oauth/ms/device-code/initiate` | Begin MS device code flow (returns user code + URL) |
+| `POST` | `/v1/oauth/ms/device-code/poll` | Poll MS device code flow until authorized |
 | `GET` | `/v1/connections/{id}/status` | Token validity for a connection |
 | `DELETE` | `/v1/connections/{id}/xero` | Revoke and delete a Xero connection |
 | `DELETE` | `/v1/connections/{id}/ms` | Delete a Microsoft connection's cached token |

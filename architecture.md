@@ -49,7 +49,8 @@ app/
 │   └── outbound/
 │       ├── ms_graph/
 │       │   ├── client.py            # MSGraphClient (sends messages)
-│       │   ├── token_manager.py     # MSTokenManager (client_credentials)
+│       │   ├── token_manager.py     # MSTokenManager (device code / delegated)
+│       │   ├── device_code_client.py# MSDeviceCodeClient (initiate + poll + refresh)
 │       │   └── card_builder.py      # Builds Adaptive Card JSON
 │       ├── xero/
 │       │   ├── client.py            # XeroHttpClient (invoices)
@@ -70,8 +71,8 @@ app/
 │   ├── ports/           # Abstract base classes (interfaces)
 │   ├── use_cases/
 │   │   ├── teams.py     # SendTeamsMessage, SendTeamsApprovalCard
-│   │   ├── xero.py      # CreateXeroDraftInvoice, SubmitXeroInvoice, ...
-│   │   ├── oauth.py     # BuildXeroAuthorizationUrl, HandleXeroOAuthCallback, ...
+│   │   ├── xero.py      # CreateXeroDraftInvoice, SubmitXeroInvoice, GetXeroInvoice, ListXeroContacts, ...
+│   │   ├── oauth.py     # BuildXeroAuthorizationUrl, HandleXeroOAuthCallback, InitiateMSDeviceCodeFlow, PollMSDeviceCodeFlow, ...
 │   │   └── results.py   # Result value objects
 │   └── errors.py
 └── infrastructure/
@@ -106,6 +107,8 @@ Abstract base classes in `app/core/ports/`:
 | `AbstractXeroClient` | `XeroHttpClient` |
 | `AbstractOAuthClient` | `XeroAuthlibOAuthClient` |
 
+`MSDeviceCodeClient` is a concrete helper (not a port) used directly by `MSTokenManager` for device code initiation and refresh calls.
+
 ### Use cases
 
 Use cases (`app/core/use_cases/`) contain business logic. They call only port interfaces; they never import FastAPI, httpx, Redis, or any adapter. FastAPI's dependency injection system assembles the concrete collaborators via `app/adapters/inbound/api/dependencies.py`.
@@ -114,10 +117,30 @@ Use cases (`app/core/use_cases/`) contain business logic. They call only port in
 
 ## Microsoft flow
 
-Microsoft uses the OAuth 2.0 **client_credentials** grant (app-only, no user login):
+Microsoft uses the OAuth 2.0 **Device Code Flow** (delegated, on behalf of a user). A one-time operator authorization is required; the stored refresh token is then used to silently renew access tokens.
+
+### One-time setup
 
 ```
-OpenClaw → POST /v1/teams/messages
+Operator → POST /v1/oauth/ms/device-code/initiate?connection_id=ms-default
+               ↓
+           MSDeviceCodeClient.start_device_code_flow()
+               POST https://login.microsoftonline.com/{tenant}/oauth2/v2.0/devicecode
+           Returns { user_code, verification_uri, device_code, expires_in, interval }
+               ↓
+           Operator opens verification_uri in browser, enters user_code, signs in
+               ↓
+           Operator → POST /v1/oauth/ms/device-code/poll  { connection_id, device_code }
+               ↓
+           MSDeviceCodeClient.poll_device_code(device_code)
+               POST https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
+               (grant_type=urn:ietf:params:oauth:grant-type:device_code)
+           On success: access_token + refresh_token stored in Redis token:{connection_id}
+```
+
+Poll returns `{ status: "pending" | "authorized" | "expired" }`. Keep polling at the specified interval until `authorized`.
+
+### Subsequent API calls
               ↓
           SendTeamsMessage use case
               ↓
@@ -125,11 +148,13 @@ OpenClaw → POST /v1/teams/messages
               ↓
           MSTokenManager.get_token(connection_id)
               ├─ Load from Redis: token:{connection_id}
+              │   ├─ If missing → raise ConnectionMissingError (operator must complete device code flow)
               │   └─ If valid → return access_token
               └─ Acquire distributed lock
                   ├─ Double-check Redis (another worker may have refreshed)
-                  └─ POST https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
-                          (grant_type=client_credentials)
+                  └─ MSDeviceCodeClient.refresh_token(current_token)
+                      POST https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token
+                          (grant_type=refresh_token)
                       Store result in Redis
               ↓
           POST https://graph.microsoft.com/v1.0/teams/{id}/channels/{id}/messages
@@ -137,9 +162,9 @@ OpenClaw → POST /v1/teams/messages
           Return message_id → OpenClaw
 ```
 
-On a 401 from MS Graph, the client forces token re-acquisition and retries exactly once.
+On a 401 from MS Graph, the client forces a token refresh and retries exactly once.
 
-There is no user-facing OAuth flow for Microsoft. The `ms-default` connection ID is used for all MS Graph calls by default.
+If no token is present in Redis (device code flow not yet completed), `ConnectionMissingError` is raised and the caller receives a 404.
 
 ---
 
@@ -204,7 +229,7 @@ token:xero-prod
   xero_tenant_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 ```
 
-Microsoft tokens have an empty `refresh_token` and empty `xero_tenant_id`.
+Microsoft tokens have a `refresh_token` (mandatory after device code flow) and empty `xero_tenant_id`.
 
 No TTL is set on the Redis key; expiry is determined by comparing `expires_at` to the current time minus `REFRESH_BUFFER_SECONDS`.
 
@@ -257,8 +282,12 @@ OpenClaw treats this service as a thin integration broker:
 
 2. **Xero invoices** — OpenClaw POSTs to `/v1/xero/invoices` with invoice data. It supplies an `Idempotency-Key` to prevent duplicates on retries. The service handles token refresh, tenant ID headers, and the Xero API call.
 
-3. **Xero authorization (one-time setup)** — An operator calls `/v1/oauth/xero/authorize`, opens the returned URL in a browser, and completes the Xero consent screen. The callback stores the token; OpenClaw's subsequent invoice calls work transparently from that point on.
+3. **Xero contacts** — OpenClaw (or an operator) calls `GET /v1/xero/contacts?connection_id=...` optionally with a `?search=` query to locate a contact ID before creating an invoice.
 
-4. **Connection health** — OpenClaw can call `/v1/connections/{id}/status` to check whether a connection's token is `valid`, `expired`, or `missing` before attempting operations.
+4. **Xero authorization (one-time setup)** — An operator calls `/v1/oauth/xero/authorize`, opens the returned URL in a browser, and completes the Xero consent screen. The callback stores the token; OpenClaw's subsequent invoice calls work transparently from that point on.
+
+5. **Microsoft authorization (one-time setup)** — An operator calls `POST /v1/oauth/ms/device-code/initiate`, opens the returned `verification_uri` in a browser, enters the `user_code`, and signs in. The operator then polls `POST /v1/oauth/ms/device-code/poll` until `status: authorized`. Subsequent Teams calls work autonomously via refresh token.
+
+6. **Connection health** — OpenClaw can call `/v1/connections/{id}/status` to check whether a connection's token is `valid`, `expired`, or `missing` before attempting operations.
 
 OpenClaw never sees raw OAuth tokens; it authenticates to this service only with the static `INTERNAL_API_KEY`.

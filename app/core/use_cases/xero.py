@@ -25,7 +25,7 @@ from decimal import Decimal
 from app.core.domain.xero import XeroInvoice
 from app.core.ports.idempotency_store import AbstractIdempotencyStore
 from app.core.ports.xero_client import AbstractXeroClient
-from app.core.use_cases.results import XeroInvoiceResult
+from app.core.use_cases.results import XeroContactResult, XeroInvoiceResult
 
 logger = logging.getLogger(__name__)
 
@@ -182,6 +182,32 @@ class GetXeroInvoice:
             invoice_id=invoice_id,
         )
         return _extract_invoice_result(response)
+
+
+class ListXeroContacts:
+    """List contacts from Xero, optionally filtered by name."""
+
+    def __init__(self, xero_client: AbstractXeroClient) -> None:
+        self._xero_client = xero_client
+
+    async def execute(
+        self,
+        connection_id: str,
+        search: str | None = None,
+    ) -> list[XeroContactResult]:
+        response = await self._xero_client.list_contacts(
+            connection_id=connection_id,
+            search=search,
+        )
+        contacts = response.get("Contacts", [])
+        return [
+            XeroContactResult(
+                contact_id=c["ContactID"],
+                name=c.get("Name", ""),
+                email=c.get("EmailAddress") or None,
+            )
+            for c in contacts
+        ]
 
 
 class VoidXeroInvoice:

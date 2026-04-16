@@ -86,6 +86,20 @@ class XeroHttpClient(AbstractXeroClient):
             connection_id=connection_id,
         )
 
+    async def list_contacts(
+        self,
+        connection_id: str,
+        search: str | None = None,
+    ) -> dict:
+        """GET contacts from Xero, optionally filtered by name/email."""
+        params = {"where": f'Name.Contains("{search}")'} if search else {}
+        return await self._request(
+            "GET",
+            f"{_XERO_API_BASE}/Contacts",
+            connection_id=connection_id,
+            params=params,
+        )
+
     # ── Private ────────────────────────────────────────────────────────────────
 
     async def _request(

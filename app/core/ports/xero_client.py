@@ -46,3 +46,14 @@ class AbstractXeroClient(ABC):
 
         Returns the Xero API response body as a dict.
         """
+
+    @abstractmethod
+    async def list_contacts(
+        self,
+        connection_id: str,
+        search: str | None = None,
+    ) -> dict:
+        """GET contacts from Xero, optionally filtered by name/email.
+
+        Returns the Xero API response body as a dict.
+        """
