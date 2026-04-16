@@ -5,8 +5,12 @@ BuildXeroAuthorizationUrl and HandleXeroOAuthCallback cover the one-time
 Xero authorization setup.  GetConnectionStatus and RevokeConnection apply
 to both Microsoft and Xero connections.
 
-Microsoft has no OAuth use cases: its client_credentials token is acquired
-automatically by the MSGraphClient adapter on demand.
+Microsoft device code flow:
+  InitiateMSDeviceCodeFlow  — start the device code flow; return user_code /
+                              verification_uri for the operator to open in a
+                              browser, plus the device_code for the poll step.
+  PollMSDeviceCodeFlow      — single poll attempt.  The caller (inbound route)
+                              is responsible for the retry loop and sleep.
 """
 
 from __future__ import annotations
@@ -18,7 +22,7 @@ from app.core.errors import ConnectionMissingError
 from app.core.ports.oauth_client import AbstractOAuthClient
 from app.core.ports.oauth_state_store import AbstractOAuthStateStore
 from app.core.ports.token_store import AbstractTokenStore
-from app.core.use_cases.results import AuthUrlResult, ConnectionStatus
+from app.core.use_cases.results import AuthUrlResult, ConnectionStatus, DeviceCodeResult
 
 logger = logging.getLogger(__name__)
 
@@ -154,3 +158,84 @@ class RevokeConnection:
 
         await self._token_store.delete(connection_id)
         logger.info("Connection %r revoked and token deleted.", connection_id)
+
+
+# ── Microsoft device code flow ─────────────────────────────────────────────────
+
+
+class InitiateMSDeviceCodeFlow:
+    """Start a Microsoft device code flow.
+
+    Posts to the Azure device code endpoint and returns the details the
+    operator needs to complete authorization in a browser.  The returned
+    ``device_code`` must be passed to PollMSDeviceCodeFlow to complete the
+    exchange once the operator has signed in.
+
+    This use case is intentionally thin — it delegates to MSDeviceCodeClient,
+    which is injected as a protocol-agnostic duck-typed dependency.  The core
+    does not import the adapter directly; the DI layer wires the concrete class.
+    """
+
+    def __init__(self, ms_device_code_client) -> None:
+        # Typed as Any here because the core does not import the adapter layer.
+        # The concrete MSDeviceCodeClient is injected by dependencies.py.
+        self._client = ms_device_code_client
+
+    async def execute(self) -> DeviceCodeResult:
+        """Initiate the device code flow and return user-facing details."""
+        body = await self._client.start_device_code_flow()
+        logger.info(
+            "MS device code flow initiated — user_code=%r", body.get("user_code")
+        )
+        return DeviceCodeResult(
+            device_code=body["device_code"],
+            user_code=body["user_code"],
+            verification_uri=body["verification_uri"],
+            expires_in=int(body.get("expires_in", 900)),
+            interval=int(body.get("interval", 5)),
+            message=body.get("message", ""),
+        )
+
+
+class PollMSDeviceCodeFlow:
+    """Poll for a completed Microsoft device code authorization.
+
+    The caller (inbound route) drives the retry loop.  This use case performs
+    a single poll attempt and either returns a connection_id on success or
+    raises an exception the caller handles.
+
+    On success the token set is stored in Redis under the given connection_id,
+    making the MS connection immediately usable by the Teams send endpoints.
+    """
+
+    def __init__(
+        self,
+        ms_device_code_client,
+        token_store: AbstractTokenStore,
+    ) -> None:
+        self._client = ms_device_code_client
+        self._token_store = token_store
+
+    async def execute(self, connection_id: str, device_code: str) -> str:
+        """Poll once; store the token on success and return the connection_id.
+
+        Raises
+        ------
+        DeviceCodePending
+            Authorization not yet completed — try again after ``interval`` s.
+        DeviceCodeExpired
+            The 15-minute window elapsed without user action.
+        ConnectionExpiredError
+            The user actively declined the authorization request.
+        ProviderUnavailableError
+            Azure returned an unexpected error.
+        """
+        # Import here so the core does not depend on the adapter module path;
+        # the exception types travel as plain exceptions.
+        token_set = await self._client.poll_device_code(device_code)
+        await self._token_store.store(connection_id, token_set)
+        logger.info(
+            "MS device code flow completed; token stored for connection %r",
+            connection_id,
+        )
+        return connection_id

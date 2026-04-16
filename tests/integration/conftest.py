@@ -69,7 +69,6 @@ def mock_router():
 TEST_API_KEY = "integration-test-key"
 TEST_MS_TENANT = "test-tenant-id"
 TEST_MS_CLIENT_ID = "test-ms-client-id"
-TEST_MS_CLIENT_SECRET = "test-ms-secret"
 TEST_MS_TOKEN = "ms-access-token-integration"
 TEST_XERO_TENANT_ID = "xero-tenant-uuid"
 TEST_XERO_ACCESS_TOKEN = "xero-access-token-integration"
@@ -83,7 +82,6 @@ def _make_settings():
     object.__setattr__(settings, "internal_api_key", TEST_API_KEY)
     object.__setattr__(settings, "ms_tenant_id", TEST_MS_TENANT)
     object.__setattr__(settings, "ms_client_id", TEST_MS_CLIENT_ID)
-    object.__setattr__(settings, "ms_client_secret", TEST_MS_CLIENT_SECRET)
     object.__setattr__(settings, "seq_enabled", False)
     return settings
 
@@ -131,11 +129,8 @@ async def app_client(redis_client, mock_router):
 # ---------------------------------------------------------------------------
 
 
-def register_ms_token_route(router: respx.MockRouter) -> None:
-    """Mock the Azure AD client_credentials token endpoint."""
-    expires_at = (
-        datetime.now(timezone.utc) + timedelta(hours=1)
-    ).timestamp()
+def register_ms_refresh_route(router: respx.MockRouter) -> None:
+    """Mock the Azure AD refresh_token grant endpoint."""
     router.post(
         url__regex=r"https://login\.microsoftonline\.com/.+/oauth2/v2\.0/token",
     ).mock(
@@ -145,9 +140,35 @@ def register_ms_token_route(router: respx.MockRouter) -> None:
                 "access_token": TEST_MS_TOKEN,
                 "token_type": "Bearer",
                 "expires_in": 3600,
-                "expires_at": expires_at,
+                "refresh_token": "new-ms-refresh-token",
+                "scope": "https://graph.microsoft.com/ChannelMessage.Send",
             },
         )
+    )
+
+
+# Keep the old name as an alias so existing tests do not break.
+register_ms_token_route = register_ms_refresh_route
+
+
+def register_ms_token_in_redis(redis, connection_id: str) -> None:
+    """Pre-seed a valid delegated MS token in Redis.
+
+    Returns the coroutine from redis.hset — the caller must await it.
+    """
+    expires_at = (
+        datetime.now(timezone.utc) + timedelta(hours=1)
+    ).isoformat()
+    return redis.hset(
+        f"token:{connection_id}",
+        mapping={
+            "access_token": TEST_MS_TOKEN,
+            "expires_at": expires_at,
+            "token_type": "Bearer",
+            "refresh_token": "ms-refresh-token",
+            "scope": "https://graph.microsoft.com/ChannelMessage.Send",
+            "xero_tenant_id": "",
+        },
     )
 
 

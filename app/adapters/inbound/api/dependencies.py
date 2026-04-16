@@ -13,6 +13,7 @@ from fastapi import Depends, Request
 
 from app.adapters.outbound.lock.redis_lock import RedisLockManager
 from app.adapters.outbound.ms_graph.client import MSGraphClient
+from app.adapters.outbound.ms_graph.device_code_client import MSDeviceCodeClient
 from app.adapters.outbound.ms_graph.token_manager import MSTokenManager
 from app.adapters.outbound.token_store.redis_idempotency_store import RedisIdempotencyStore
 from app.adapters.outbound.token_store.redis_token_store import RedisTokenStore
@@ -24,6 +25,8 @@ from app.core.use_cases.oauth import (
     BuildXeroAuthorizationUrl,
     GetConnectionStatus,
     HandleXeroOAuthCallback,
+    InitiateMSDeviceCodeFlow,
+    PollMSDeviceCodeFlow,
     RevokeConnection,
 )
 from app.core.use_cases.teams import SendTeamsApprovalCard, SendTeamsMessage
@@ -67,20 +70,28 @@ def get_idempotency_store(redis=Depends(get_redis)) -> RedisIdempotencyStore:
 # ── Microsoft Graph ───────────────────────────────────────────────────────────
 
 
+def get_ms_device_code_client(
+    http_client=Depends(get_http_client),
+    settings: Settings = Depends(get_settings),
+) -> MSDeviceCodeClient:
+    return MSDeviceCodeClient(
+        http_client=http_client,
+        tenant_id=settings.ms_tenant_id,
+        client_id=settings.ms_client_id,
+        scopes=settings.ms_graph_scopes,
+    )
+
+
 def get_ms_token_manager(
     token_store: RedisTokenStore = Depends(get_token_store),
     lock_manager: RedisLockManager = Depends(get_lock_manager),
-    http_client=Depends(get_http_client),
+    device_code_client: MSDeviceCodeClient = Depends(get_ms_device_code_client),
     settings: Settings = Depends(get_settings),
 ) -> MSTokenManager:
     return MSTokenManager(
         token_store=token_store,
         lock_manager=lock_manager,
-        http_client=http_client,
-        tenant_id=settings.ms_tenant_id,
-        client_id=settings.ms_client_id,
-        client_secret=settings.ms_client_secret,
-        scopes=settings.ms_graph_scopes,
+        device_code_client=device_code_client,
         refresh_buffer_seconds=settings.refresh_buffer_seconds,
     )
 
@@ -256,5 +267,21 @@ def get_revoke_xero_connection(
 def get_revoke_ms_connection(
     token_store: RedisTokenStore = Depends(get_token_store),
 ) -> RevokeConnection:
-    """RevokeConnection for Microsoft — no provider revocation (client_credentials)."""
+    """RevokeConnection for Microsoft — no provider revocation (delegated token; revoke locally only)."""
     return RevokeConnection(token_store=token_store, oauth_client=None)
+
+
+def get_initiate_ms_device_code(
+    device_code_client: MSDeviceCodeClient = Depends(get_ms_device_code_client),
+) -> InitiateMSDeviceCodeFlow:
+    return InitiateMSDeviceCodeFlow(ms_device_code_client=device_code_client)
+
+
+def get_poll_ms_device_code(
+    device_code_client: MSDeviceCodeClient = Depends(get_ms_device_code_client),
+    token_store: RedisTokenStore = Depends(get_token_store),
+) -> PollMSDeviceCodeFlow:
+    return PollMSDeviceCodeFlow(
+        ms_device_code_client=device_code_client,
+        token_store=token_store,
+    )

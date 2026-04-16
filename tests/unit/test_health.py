@@ -20,13 +20,11 @@ from app.main import health
 def _mock_settings(
     ms_tenant_id: str = "tenant",
     ms_client_id: str = "client",
-    ms_client_secret: str = "secret",
-    ms_graph_scopes: str = "https://graph.microsoft.com/.default",
+    ms_graph_scopes: str = "https://graph.microsoft.com/ChannelMessage.Send",
 ) -> MagicMock:
     s = MagicMock()
     s.ms_tenant_id = ms_tenant_id
     s.ms_client_id = ms_client_id
-    s.ms_client_secret = ms_client_secret
     s.ms_graph_scopes = ms_graph_scopes
     return s
 
@@ -48,9 +46,9 @@ def _mock_request(
 
     http_client = AsyncMock()
     if ms_raises is not None:
-        http_client.post.side_effect = ms_raises
+        http_client.get.side_effect = ms_raises
     else:
-        http_client.post.return_value = ms_resp
+        http_client.get.return_value = ms_resp
 
     request = MagicMock()
     request.app.state.redis = redis
@@ -137,7 +135,7 @@ async def test_health_ms_graph_uses_correct_token_url():
     with patch("app.main.get_settings", return_value=settings):
         await health(request)
 
-    call_args = request.app.state.http_client.post.call_args
+    call_args = request.app.state.http_client.get.call_args
     url = call_args[0][0]
     assert "my-tenant-id" in url
-    assert "/oauth2/v2.0/token" in url
+    assert "/.well-known/openid-configuration" in url

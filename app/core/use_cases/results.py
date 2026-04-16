@@ -39,3 +39,20 @@ class ConnectionStatus:
     """The current validity state of a stored provider connection."""
 
     status: Literal["valid", "expired", "missing"]
+
+
+@dataclass(frozen=True)
+class DeviceCodeResult:
+    """Result of initiating a Microsoft device code flow.
+
+    user_code and verification_uri are surfaced to the operator so they can
+    complete the browser authorization step.  device_code and interval are
+    retained by the caller for the subsequent polling loop.
+    """
+
+    device_code: str
+    user_code: str
+    verification_uri: str
+    expires_in: int
+    interval: int
+    message: str

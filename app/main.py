@@ -182,6 +182,11 @@ async def health(request: Request) -> JSONResponse:
         {"status": "ok" | "degraded",
          "redis":    "ok" | "error",
          "ms_graph": "ok" | "error"}
+
+    The ms_graph check is a lightweight GET to the Azure OpenID Connect
+    discovery endpoint.  It validates network reachability without requiring
+    any credentials or stored tokens (the service now uses delegated auth and
+    has no client secret to use for a token probe).
     """
     settings = get_settings()
 
@@ -194,22 +199,18 @@ async def health(request: Request) -> JSONResponse:
         redis_status = "error"
 
     # ── MS Graph probe ────────────────────────────────────────────────────────
-    # A lightweight client_credentials token request validates that the MS
-    # tenant / client credentials are correct and the endpoint is reachable.
+    # GET the Azure tenant OpenID discovery document to verify that the
+    # configured tenant ID is valid and the Azure endpoint is reachable.
+    # This replaces the old client_credentials token probe — the service no
+    # longer holds a client secret.
     ms_graph_status: str
     try:
-        token_url = (
+        discovery_url = (
             f"https://login.microsoftonline.com/{settings.ms_tenant_id}"
-            "/oauth2/v2.0/token"
+            "/v2.0/.well-known/openid-configuration"
         )
-        resp = await request.app.state.http_client.post(
-            token_url,
-            data={
-                "grant_type": "client_credentials",
-                "client_id": settings.ms_client_id,
-                "client_secret": settings.ms_client_secret,
-                "scope": settings.ms_graph_scopes,
-            },
+        resp = await request.app.state.http_client.get(
+            discovery_url,
             timeout=5.0,
         )
         ms_graph_status = "ok" if resp.status_code == 200 else "error"

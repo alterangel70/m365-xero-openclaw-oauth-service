@@ -18,11 +18,12 @@ class Settings(BaseSettings):
     )
 
     # ── Microsoft / Graph ─────────────────────────────────────────────────────
-    # client_credentials grant only; no user principal, no browser flow.
+    # Delegated (device code) grant; an operator authorizes once via a browser.
+    # ms_client_secret is NOT required — device code flow uses a public client
+    # (no client secret needed for native/public app registrations).
     ms_tenant_id: str
     ms_client_id: str
-    ms_client_secret: str
-    ms_graph_scopes: str = "https://graph.microsoft.com/.default"
+    ms_graph_scopes: str = "https://graph.microsoft.com/ChannelMessage.Send"
     ms_default_connection_id: str = "ms-default"
 
     # ── Xero ──────────────────────────────────────────────────────────────────

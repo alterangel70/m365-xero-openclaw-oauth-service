@@ -14,6 +14,18 @@ GET /v1/oauth/xero/callback
     Xero (the redirect destination) cannot supply it.
     CSRF protection is provided by the state parameter.
 
+POST /v1/oauth/ms/device-code/initiate
+    Start a Microsoft device code flow for a given connection_id.
+    Returns user_code, verification_uri, device_code, interval, expires_in.
+    The operator visits verification_uri and enters user_code in a browser.
+    Protected by INTERNAL_API_KEY.
+
+POST /v1/oauth/ms/device-code/poll
+    Poll for a completed Microsoft device code authorization.
+    Pass the device_code received from the initiate endpoint.
+    Returns 200 on success, 202 while pending, 410 on expiry.
+    Protected by INTERNAL_API_KEY.
+
 GET /v1/connections/{connection_id}/status
     Return validity state of any stored connection (Xero or MS).
     Protected by INTERNAL_API_KEY.
@@ -34,14 +46,18 @@ from app.adapters.inbound.api.dependencies import (
     get_build_xero_authorization_url,
     get_get_connection_status,
     get_handle_xero_oauth_callback,
-    get_revoke_xero_connection,
+    get_initiate_ms_device_code,
+    get_poll_ms_device_code,
     get_revoke_ms_connection,
+    get_revoke_xero_connection,
 )
 from app.adapters.inbound.api.middleware import verify_api_key
 from app.core.use_cases.oauth import (
     BuildXeroAuthorizationUrl,
     GetConnectionStatus,
     HandleXeroOAuthCallback,
+    InitiateMSDeviceCodeFlow,
+    PollMSDeviceCodeFlow,
     RevokeConnection,
 )
 
@@ -59,6 +75,32 @@ class AuthorizeResponse(BaseModel):
 class ConnectionStatusResponse(BaseModel):
     connection_id: str
     status: str
+
+
+class DeviceCodeInitiateResponse(BaseModel):
+    """Returned when a device code flow is started.
+
+    The operator must visit ``verification_uri`` and enter ``user_code``.
+    Pass ``device_code`` and ``connection_id`` to the /poll endpoint.
+    """
+
+    connection_id: str
+    device_code: str
+    user_code: str
+    verification_uri: str
+    expires_in: int
+    interval: int
+    message: str
+
+
+class DeviceCodePollRequest(BaseModel):
+    connection_id: str
+    device_code: str
+
+
+class DeviceCodePollResponse(BaseModel):
+    connection_id: str
+    status: str  # "authorized" | "pending" | "expired"
 
 
 # ── Xero OAuth flow ────────────────────────────────────────────────────────────
@@ -113,6 +155,79 @@ async def xero_callback(
             "detail": "Xero authorization complete. Token stored.",
         },
     )
+
+
+# ── Microsoft device code flow ─────────────────────────────────────────────────
+
+
+@router.post(
+    "/v1/oauth/ms/device-code/initiate",
+    response_model=DeviceCodeInitiateResponse,
+    dependencies=[Depends(verify_api_key)],
+)
+async def ms_device_code_initiate(
+    connection_id: str = Query(
+        ...,
+        description="Logical name for this MS connection (e.g. 'ms-default').",
+    ),
+    use_case: InitiateMSDeviceCodeFlow = Depends(get_initiate_ms_device_code),
+) -> DeviceCodeInitiateResponse:
+    """Start the Microsoft device code flow.
+
+    Returns a ``user_code`` and ``verification_uri`` the operator must open in
+    a browser to authorize the connection.  Store the returned ``device_code``
+    and call /poll until the status is ``authorized``.
+    """
+    result = await use_case.execute()
+    return DeviceCodeInitiateResponse(
+        connection_id=connection_id,
+        device_code=result.device_code,
+        user_code=result.user_code,
+        verification_uri=result.verification_uri,
+        expires_in=result.expires_in,
+        interval=result.interval,
+        message=result.message,
+    )
+
+
+@router.post(
+    "/v1/oauth/ms/device-code/poll",
+    response_model=DeviceCodePollResponse,
+    dependencies=[Depends(verify_api_key)],
+)
+async def ms_device_code_poll(
+    body: DeviceCodePollRequest,
+    use_case: PollMSDeviceCodeFlow = Depends(get_poll_ms_device_code),
+) -> DeviceCodePollResponse:
+    """Poll for a completed Microsoft device code authorization.
+
+    Call this endpoint repeatedly at the ``interval`` returned by /initiate
+    until the response status is ``authorized``.
+
+    Status values:
+      ``authorized`` — the operator completed sign-in; token is stored.
+      ``pending``    — the operator has not yet completed sign-in; try again.
+      ``expired``    — the device code window elapsed; start a new flow.
+    """
+    from app.adapters.outbound.ms_graph.device_code_client import (
+        DeviceCodeExpired,
+        DeviceCodePending,
+    )
+
+    try:
+        connection_id = await use_case.execute(
+            connection_id=body.connection_id,
+            device_code=body.device_code,
+        )
+        return DeviceCodePollResponse(connection_id=connection_id, status="authorized")
+    except DeviceCodePending:
+        return DeviceCodePollResponse(
+            connection_id=body.connection_id, status="pending"
+        )
+    except DeviceCodeExpired:
+        return DeviceCodePollResponse(
+            connection_id=body.connection_id, status="expired"
+        )
 
 
 # ── Connection management ──────────────────────────────────────────────────────
