@@ -6,6 +6,7 @@ import httpx
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.adapters.inbound.api.oauth import router as oauth_router
 from app.adapters.inbound.api.teams import router as teams_router
 from app.adapters.inbound.api.xero import router as xero_router
 from app.core.errors import (
@@ -117,6 +118,7 @@ async def lock_timeout_handler(
 
 app.include_router(teams_router)
 app.include_router(xero_router)
+app.include_router(oauth_router)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

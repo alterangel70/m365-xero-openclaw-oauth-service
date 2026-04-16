@@ -17,8 +17,15 @@ from app.adapters.outbound.ms_graph.token_manager import MSTokenManager
 from app.adapters.outbound.token_store.redis_idempotency_store import RedisIdempotencyStore
 from app.adapters.outbound.token_store.redis_token_store import RedisTokenStore
 from app.adapters.outbound.xero.client import XeroHttpClient
+from app.adapters.outbound.token_store.redis_oauth_state_store import RedisOAuthStateStore
 from app.adapters.outbound.xero.oauth_client import XeroAuthlibOAuthClient
 from app.adapters.outbound.xero.token_manager import XeroTokenManager
+from app.core.use_cases.oauth import (
+    BuildXeroAuthorizationUrl,
+    GetConnectionStatus,
+    HandleXeroOAuthCallback,
+    RevokeConnection,
+)
 from app.core.use_cases.teams import SendTeamsApprovalCard, SendTeamsMessage
 from app.core.use_cases.xero import (
     CreateXeroDraftInvoice,
@@ -192,3 +199,62 @@ def get_void_xero_invoice(
         idempotency_store=idempotency_store,
         idempotency_ttl_seconds=settings.idempotency_ttl_seconds,
     )
+
+
+# ── OAuth state store ─────────────────────────────────────────────────────────
+
+
+def get_oauth_state_store(redis=Depends(get_redis)) -> RedisOAuthStateStore:
+    return RedisOAuthStateStore(redis)
+
+
+# ── OAuth use cases ────────────────────────────────────────────────────────────
+
+
+def get_build_xero_authorization_url(
+    oauth_client: XeroAuthlibOAuthClient = Depends(get_xero_oauth_client),
+    state_store: RedisOAuthStateStore = Depends(get_oauth_state_store),
+    settings: Settings = Depends(get_settings),
+) -> BuildXeroAuthorizationUrl:
+    return BuildXeroAuthorizationUrl(
+        oauth_client=oauth_client,
+        state_store=state_store,
+        oauth_state_ttl_seconds=settings.oauth_state_ttl_seconds,
+    )
+
+
+def get_handle_xero_oauth_callback(
+    oauth_client: XeroAuthlibOAuthClient = Depends(get_xero_oauth_client),
+    state_store: RedisOAuthStateStore = Depends(get_oauth_state_store),
+    token_store: RedisTokenStore = Depends(get_token_store),
+) -> HandleXeroOAuthCallback:
+    return HandleXeroOAuthCallback(
+        oauth_client=oauth_client,
+        state_store=state_store,
+        token_store=token_store,
+    )
+
+
+def get_get_connection_status(
+    token_store: RedisTokenStore = Depends(get_token_store),
+    settings: Settings = Depends(get_settings),
+) -> GetConnectionStatus:
+    return GetConnectionStatus(
+        token_store=token_store,
+        refresh_buffer_seconds=settings.refresh_buffer_seconds,
+    )
+
+
+def get_revoke_xero_connection(
+    token_store: RedisTokenStore = Depends(get_token_store),
+    oauth_client: XeroAuthlibOAuthClient = Depends(get_xero_oauth_client),
+) -> RevokeConnection:
+    """RevokeConnection for Xero — calls the provider revocation endpoint."""
+    return RevokeConnection(token_store=token_store, oauth_client=oauth_client)
+
+
+def get_revoke_ms_connection(
+    token_store: RedisTokenStore = Depends(get_token_store),
+) -> RevokeConnection:
+    """RevokeConnection for Microsoft — no provider revocation (client_credentials)."""
+    return RevokeConnection(token_store=token_store, oauth_client=None)
