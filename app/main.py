@@ -18,7 +18,7 @@ from app.core.errors import (
     ProviderUnavailableError,
 )
 from app.infrastructure.config import get_settings
-from app.infrastructure.logging import configure_logging
+from app.infrastructure.logging import configure_logging, flush_seq_handler
 from app.infrastructure.redis_client import create_redis_pool
 
 logger = logging.getLogger(__name__)
@@ -52,6 +52,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     await app.state.redis.aclose()
     logger.info("Redis connection pool closed")
+
+    # Flush any records still buffered in the Seq handler so none are lost
+    # on shutdown.  Must be called after the last log statement above so
+    # those records are also included.
+    flush_seq_handler()
 
 
 app = FastAPI(

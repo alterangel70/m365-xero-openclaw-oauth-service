@@ -4,6 +4,7 @@ Logging configuration.
 Provides:
   - configure_logging(settings): called once at startup; sets up the root
     logger for console output and, when SEQ_ENABLED=true, adds a Seq handler.
+  - flush_seq_handler(): flush any buffered Seq records; call on shutdown.
   - Request-ID context helpers used by RequestIdMiddleware and the logging
     filter so that every log line emitted during a request carries the same
     correlation ID.
@@ -50,13 +51,40 @@ class _RequestIdFilter(logging.Filter):
 
     Attaching this filter to the root logger means every handler — console
     and Seq alike — receives records with a ``request_id`` attribute.  Seq
-    (via seqlog's ``support_extra_properties=True``) exposes it as a
-    searchable property; the console formatter ignores it.
+    picks it up via ``record.log_props`` (populated below) and exposes it as
+    a searchable property; the console formatter ignores it.
     """
 
     def filter(self, record: logging.LogRecord) -> bool:
-        record.request_id = _request_id_var.get("")
+        rid = _request_id_var.get("")
+        record.request_id = rid
+        # seqlog reads structured properties from record.log_props; inject
+        # request_id there so it appears as a Seq property.
+        if rid:
+            if not hasattr(record, "log_props"):
+                record.log_props = {}  # type: ignore[attr-defined]
+            record.log_props["request_id"] = rid  # type: ignore[attr-defined]
         return True
+
+
+# ---------------------------------------------------------------------------
+# Seq handler reference (for flush-on-shutdown)
+# ---------------------------------------------------------------------------
+
+_seq_handler: logging.Handler | None = None
+
+
+def flush_seq_handler() -> None:
+    """Flush any buffered Seq log records and close the handler.
+
+    Call this once during application shutdown to ensure no records are lost
+    in the ``SeqLogHandler``'s internal queue.
+    """
+    if _seq_handler is not None:
+        try:
+            _seq_handler.flush()
+        except Exception:
+            pass  # best-effort; do not raise during shutdown
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +106,8 @@ def configure_logging(settings) -> None:
         The application ``Settings`` object; accessed for ``log_level``,
         ``seq_enabled``, ``seq_url``, ``seq_api_key``, and ``seq_min_level``.
     """
+    global _seq_handler
+
     root = logging.getLogger()
     root.handlers.clear()
     root.setLevel(settings.log_level)
@@ -97,18 +127,29 @@ def configure_logging(settings) -> None:
     root.addFilter(_RequestIdFilter())
 
     if settings.seq_enabled and settings.seq_url:
-        import seqlog
+        # Import SeqLogHandler directly to add it via root.addHandler().
+        #
+        # We must NOT use seqlog.log_to_seq() here because it calls
+        # logging.basicConfig() internally, which is a no-op once any
+        # handler has been added to the root logger (Python standard
+        # behaviour).  The SeqLogHandler would be silently discarded.
+        from seqlog.structured_logging import SeqLogHandler  # type: ignore[import-untyped]
 
-        seqlog.log_to_seq(
+        seq_handler = SeqLogHandler(
             server_url=settings.seq_url,
             api_key=settings.seq_api_key or None,
-            level=getattr(logging, settings.seq_min_level, logging.INFO),
-            # Respect the level already applied to the root logger above.
-            override_root_level=False,
-            # Send non-standard record attributes (e.g. request_id) as Seq
-            # structured properties so they are searchable and filterable.
-            support_extra_properties=True,
+            # Flush after this many records are buffered.  10 is the default;
+            # records also flush via the auto_flush_timeout below.
+            batch_size=10,
+            # Flush any buffered records to Seq every 2 seconds regardless of
+            # batch_size.  Without this, startup logs (< 10 records) would
+            # never be sent.
+            auto_flush_timeout=2,
         )
+        seq_handler.setLevel(getattr(logging, settings.seq_min_level, logging.INFO))
+        root.addHandler(seq_handler)
+        _seq_handler = seq_handler
+
         logging.getLogger(__name__).info(
             "Seq logging enabled",
             extra={"seq_url": settings.seq_url},
