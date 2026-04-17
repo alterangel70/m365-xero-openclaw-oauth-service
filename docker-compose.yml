@@ -5,7 +5,7 @@ services:
     ports:
       # Publish the app to the host so OpenClaw (which runs outside Docker) can reach it.
       # Put a TLS-terminating reverse proxy in front in production.
-      - "8000:8000"
+      - "18432:18432"
     volumes:
       # Bind mount for local development: code changes are picked up without a rebuild.
       # In production, remove this volume and bake the code into the image.
@@ -14,7 +14,7 @@ services:
       - .env
     # --reload watches for file changes; enabled here for development.
     # In production, remove --reload and the bind mount above.
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn app.main:app --host 0.0.0.0 --port 18432 --reload
     depends_on:
       redis:
         condition: service_healthy
