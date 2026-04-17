@@ -84,6 +84,75 @@ Interactive API docs are available at `http://localhost:8000/docs`.
 
 ---
 
+## One-time authorization setup
+
+Both providers require a one-time operator authorization before the service can make API calls on their behalf. Tokens are stored in Redis and auto-refreshed from that point on.
+
+Replace `<API_KEY>` with the value of `INTERNAL_API_KEY` from your `.env`.
+
+### Microsoft — Device Code Flow
+
+**1. Initiate the flow:**
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer <API_KEY>" \
+  "http://localhost:8080/v1/oauth/ms/device-code/initiate?connection_id=ms-default"
+```
+
+This returns a `user_code`, a `verification_uri`, and a `device_code`.
+
+**2.** Open the `verification_uri` (e.g. `https://login.microsoft.com/device`) in a browser, enter the `user_code`, and sign in with the Azure account belonging to the configured tenant.
+
+**3. Poll until authorized** (repeat every 5 seconds until `"status": "authorized"`):
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer <API_KEY>" \
+  -H "Content-Type: application/json" \
+  -d '{"connection_id": "ms-default", "device_code": "<device_code from step 1>"}' \
+  http://localhost:8080/v1/oauth/ms/device-code/poll
+```
+
+**4. Verify:**
+```bash
+curl -s -H "Authorization: Bearer <API_KEY>" \
+  http://localhost:8080/v1/connections/ms-default/status
+# → {"status":"valid"}
+```
+
+> The device code expires after 15 minutes. If it expires before you complete sign-in, restart from step 1.
+
+---
+
+### Xero — Authorization Code Flow
+
+**1. Get the authorization URL:**
+```bash
+curl -s \
+  -H "Authorization: Bearer <API_KEY>" \
+  "http://localhost:8080/v1/oauth/xero/authorize?connection_id=xero-default"
+```
+
+This returns `{"authorization_url": "https://login.xero.com/...", "state": "..."}`.
+
+**2.** Open the `authorization_url` in a browser and authorize the app in Xero.
+
+**3.** Xero will redirect to the `XERO_REDIRECT_URI` (e.g. `http://localhost:8080/callback`). If your browser can't reach that address, it will show a connection error — that's expected. **Copy the full URL from the browser address bar.**
+
+**4. Complete the callback manually** using the `code` and `state` from that URL:
+```bash
+curl -s "http://localhost:8080/v1/oauth/xero/callback?code=<CODE>&state=<STATE>"
+# → {"status":"ok","connection_id":"xero-default"}
+```
+
+**5. Verify:**
+```bash
+curl -s -H "Authorization: Bearer <API_KEY>" \
+  http://localhost:8080/v1/connections/xero-default/status
+# → {"status":"valid"}
+```
+
+---
+
 ## Run tests
 
 ### Unit tests (no external services needed)
