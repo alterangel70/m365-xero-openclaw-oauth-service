@@ -43,7 +43,7 @@ Python 3.12, Docker, Redis 7.
 docker compose up --build
 ```
 
-The service is available at `http://localhost:8000`.
+The service is available at `http://localhost:18432`.
 The Redis instance runs inside Docker on the `integration_net` bridge network and is not exposed to the host.
 
 ### Stop
@@ -72,6 +72,8 @@ Authorization: Bearer <INTERNAL_API_KEY>
 | `POST` | `/v1/xero/invoices/{id}/submit` | Transition invoice to AUTHORISED |
 | `POST` | `/v1/xero/invoices/{id}/void` | Void an invoice |
 | `GET` | `/v1/xero/contacts` | List Xero contacts (optional `?search=` filter) |
+| `GET` | `/v1/xero/accounts` | List Xero accounts/chart of accounts (optional `?status=ACTIVE`) |
+| `GET` | `/v1/xero/tax-rates` | List Xero tax rates (optional `?status=ACTIVE`) |
 | `GET` | `/v1/oauth/xero/authorize` | Begin Xero OAuth flow (returns redirect URL) |
 | `GET` | `/v1/oauth/xero/callback` | Xero OAuth redirect target (no API key) |
 | `POST` | `/v1/oauth/ms/device-code/initiate` | Begin MS device code flow (returns user code + URL) |
@@ -80,7 +82,7 @@ Authorization: Bearer <INTERNAL_API_KEY>
 | `DELETE` | `/v1/connections/{id}/xero` | Revoke and delete a Xero connection |
 | `DELETE` | `/v1/connections/{id}/ms` | Delete a Microsoft connection's cached token |
 
-Interactive API docs are available at `http://localhost:8000/docs`.
+Interactive API docs are available at `http://localhost:18432/docs`.
 
 ---
 
@@ -96,7 +98,7 @@ Replace `<API_KEY>` with the value of `INTERNAL_API_KEY` from your `.env`.
 ```bash
 curl -s -X POST \
   -H "Authorization: Bearer <API_KEY>" \
-  "http://localhost:8080/v1/oauth/ms/device-code/initiate?connection_id=ms-default"
+  "http://localhost:18432/v1/oauth/ms/device-code/initiate?connection_id=ms-default"
 ```
 
 This returns a `user_code`, a `verification_uri`, and a `device_code`.
@@ -109,13 +111,13 @@ curl -s -X POST \
   -H "Authorization: Bearer <API_KEY>" \
   -H "Content-Type: application/json" \
   -d '{"connection_id": "ms-default", "device_code": "<device_code from step 1>"}' \
-  http://localhost:8080/v1/oauth/ms/device-code/poll
+  http://localhost:18432/v1/oauth/ms/device-code/poll
 ```
 
 **4. Verify:**
 ```bash
 curl -s -H "Authorization: Bearer <API_KEY>" \
-  http://localhost:8080/v1/connections/ms-default/status
+  http://localhost:18432/v1/connections/ms-default/status
 # → {"status":"valid"}
 ```
 
@@ -129,7 +131,7 @@ curl -s -H "Authorization: Bearer <API_KEY>" \
 ```bash
 curl -s \
   -H "Authorization: Bearer <API_KEY>" \
-  "http://localhost:8080/v1/oauth/xero/authorize?connection_id=xero-default"
+  "http://localhost:18432/v1/oauth/xero/authorize?connection_id=xero-default"
 ```
 
 This returns `{"authorization_url": "https://login.xero.com/...", "state": "..."}`.
@@ -140,14 +142,14 @@ This returns `{"authorization_url": "https://login.xero.com/...", "state": "..."
 
 **4. Complete the callback manually** using the `code` and `state` from that URL:
 ```bash
-curl -s "http://localhost:8080/v1/oauth/xero/callback?code=<CODE>&state=<STATE>"
+curl -s "http://localhost:18432/v1/oauth/xero/callback?code=<CODE>&state=<STATE>"
 # → {"status":"ok","connection_id":"xero-default"}
 ```
 
 **5. Verify:**
 ```bash
 curl -s -H "Authorization: Bearer <API_KEY>" \
-  http://localhost:8080/v1/connections/xero-default/status
+  http://localhost:18432/v1/connections/xero-default/status
 # → {"status":"valid"}
 ```
 
@@ -180,5 +182,4 @@ This starts a disposable Redis container and runs `tests/integration/` against t
 
 ## Documentation
 
-- [Architecture](docs/architecture.md) — hexagonal structure, flows, token lifecycle, idempotency
-- [Operations](docs/operations.md) — environment variables, Docker, Seq logging, troubleshooting
+- [Architecture](architecture.md) — hexagonal structure, flows, token lifecycle, idempotency

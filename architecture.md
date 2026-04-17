@@ -53,7 +53,7 @@ app/
 │       │   ├── device_code_client.py# MSDeviceCodeClient (initiate + poll + refresh)
 │       │   └── card_builder.py      # Builds Adaptive Card JSON
 │       ├── xero/
-│       │   ├── client.py            # XeroHttpClient (invoices)
+│       │   ├── client.py            # XeroHttpClient (invoices, contacts, accounts, tax rates)
 │       │   ├── token_manager.py     # XeroTokenManager (refresh rotation)
 │       │   └── oauth_client.py      # XeroAuthlibOAuthClient (auth code flow)
 │       ├── token_store/
@@ -71,7 +71,7 @@ app/
 │   ├── ports/           # Abstract base classes (interfaces)
 │   ├── use_cases/
 │   │   ├── teams.py     # SendTeamsMessage, SendTeamsApprovalCard
-│   │   ├── xero.py      # CreateXeroDraftInvoice, SubmitXeroInvoice, GetXeroInvoice, ListXeroContacts, ...
+│   │   ├── xero.py      # CreateXeroDraftInvoice, SubmitXeroInvoice, GetXeroInvoice, VoidXeroInvoice, ListXeroContacts, ListXeroAccounts, ListXeroTaxRates
 │   │   ├── oauth.py     # BuildXeroAuthorizationUrl, HandleXeroOAuthCallback, InitiateMSDeviceCodeFlow, PollMSDeviceCodeFlow, ...
 │   │   └── results.py   # Result value objects
 │   └── errors.py
@@ -276,6 +276,8 @@ The idempotency key is scoped to the operation name, so the same key value used 
 
 ## How OpenClaw interacts with this service
 
+The service listens on **port 18432** (configured in `docker-compose.yml`).
+
 OpenClaw treats this service as a thin integration broker:
 
 1. **Teams messages** — OpenClaw POSTs to `/v1/teams/messages` or `/v1/teams/approvals` with team/channel IDs and content. The service handles token acquisition and the MS Graph API call.
@@ -284,10 +286,14 @@ OpenClaw treats this service as a thin integration broker:
 
 3. **Xero contacts** — OpenClaw (or an operator) calls `GET /v1/xero/contacts?connection_id=...` optionally with a `?search=` query to locate a contact ID before creating an invoice.
 
-4. **Xero authorization (one-time setup)** — An operator calls `/v1/oauth/xero/authorize`, opens the returned URL in a browser, and completes the Xero consent screen. The callback stores the token; OpenClaw's subsequent invoice calls work transparently from that point on.
+4. **Xero accounts** — OpenClaw calls `GET /v1/xero/accounts?connection_id=...` (optional `?status=ACTIVE`) to discover valid account codes for invoice line items.
 
-5. **Microsoft authorization (one-time setup)** — An operator calls `POST /v1/oauth/ms/device-code/initiate`, opens the returned `verification_uri` in a browser, enters the `user_code`, and signs in. The operator then polls `POST /v1/oauth/ms/device-code/poll` until `status: authorized`. Subsequent Teams calls work autonomously via refresh token.
+5. **Xero tax rates** — OpenClaw calls `GET /v1/xero/tax-rates?connection_id=...` (optional `?status=ACTIVE`) to discover valid `tax_type` values for invoice line items.
 
-6. **Connection health** — OpenClaw can call `/v1/connections/{id}/status` to check whether a connection's token is `valid`, `expired`, or `missing` before attempting operations.
+6. **Xero authorization (one-time setup)** — An operator calls `/v1/oauth/xero/authorize`, opens the returned URL in a browser, and completes the Xero consent screen. The callback stores the token; OpenClaw's subsequent invoice calls work transparently from that point on.
+
+7. **Microsoft authorization (one-time setup)** — An operator calls `POST /v1/oauth/ms/device-code/initiate`, opens the returned `verification_uri` in a browser, enters the `user_code`, and signs in. The operator then polls `POST /v1/oauth/ms/device-code/poll` until `status: authorized`. Subsequent Teams calls work autonomously via refresh token.
+
+8. **Connection health** — OpenClaw can call `/v1/connections/{id}/status` to check whether a connection's token is `valid`, `expired`, or `missing` before attempting operations.
 
 OpenClaw never sees raw OAuth tokens; it authenticates to this service only with the static `INTERNAL_API_KEY`.
