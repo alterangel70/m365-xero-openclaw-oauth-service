@@ -25,7 +25,12 @@ from decimal import Decimal
 from app.core.domain.xero import XeroInvoice
 from app.core.ports.idempotency_store import AbstractIdempotencyStore
 from app.core.ports.xero_client import AbstractXeroClient
-from app.core.use_cases.results import XeroContactResult, XeroInvoiceResult
+from app.core.use_cases.results import (
+    XeroAccountResult,
+    XeroContactResult,
+    XeroInvoiceResult,
+    XeroTaxRateResult,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -207,6 +212,61 @@ class ListXeroContacts:
                 email=c.get("EmailAddress") or None,
             )
             for c in contacts
+        ]
+
+
+class ListXeroAccounts:
+    """List accounts (chart of accounts) from Xero, optionally filtered by status."""
+
+    def __init__(self, xero_client: AbstractXeroClient) -> None:
+        self._xero_client = xero_client
+
+    async def execute(
+        self,
+        connection_id: str,
+        status: str | None = None,
+    ) -> list[XeroAccountResult]:
+        response = await self._xero_client.list_accounts(
+            connection_id=connection_id,
+            status=status,
+        )
+        accounts = response.get("Accounts", [])
+        return [
+            XeroAccountResult(
+                account_id=a["AccountID"],
+                code=a.get("Code", ""),
+                name=a.get("Name", ""),
+                type=a.get("Type", ""),
+                status=a.get("Status", ""),
+            )
+            for a in accounts
+        ]
+
+
+class ListXeroTaxRates:
+    """List tax rates from Xero, optionally filtered by status."""
+
+    def __init__(self, xero_client: AbstractXeroClient) -> None:
+        self._xero_client = xero_client
+
+    async def execute(
+        self,
+        connection_id: str,
+        status: str | None = None,
+    ) -> list[XeroTaxRateResult]:
+        response = await self._xero_client.list_tax_rates(
+            connection_id=connection_id,
+            status=status,
+        )
+        tax_rates = response.get("TaxRates", [])
+        return [
+            XeroTaxRateResult(
+                name=t.get("Name", ""),
+                tax_type=t.get("TaxType", ""),
+                status=t.get("Status", ""),
+                effective_rate=t.get("EffectiveRate"),
+            )
+            for t in tax_rates
         ]
 
 

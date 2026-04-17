@@ -100,6 +100,34 @@ class XeroHttpClient(AbstractXeroClient):
             params=params,
         )
 
+    async def list_accounts(
+        self,
+        connection_id: str,
+        status: str | None = None,
+    ) -> dict:
+        """GET accounts (chart of accounts) from Xero."""
+        params = {"where": f'Status=="{status.upper()}"'} if status else {}
+        return await self._request(
+            "GET",
+            f"{_XERO_API_BASE}/Accounts",
+            connection_id=connection_id,
+            params=params,
+        )
+
+    async def list_tax_rates(
+        self,
+        connection_id: str,
+        status: str | None = None,
+    ) -> dict:
+        """GET tax rates from Xero."""
+        params = {"where": f'Status=="{status.upper()}"'} if status else {}
+        return await self._request(
+            "GET",
+            f"{_XERO_API_BASE}/TaxRates",
+            connection_id=connection_id,
+            params=params,
+        )
+
     # ── Private ────────────────────────────────────────────────────────────────
 
     async def _request(

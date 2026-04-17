@@ -33,7 +33,9 @@ from app.core.use_cases.teams import SendTeamsApprovalCard, SendTeamsMessage
 from app.core.use_cases.xero import (
     CreateXeroDraftInvoice,
     GetXeroInvoice,
+    ListXeroAccounts,
     ListXeroContacts,
+    ListXeroTaxRates,
     SubmitXeroInvoice,
     VoidXeroInvoice,
 )
@@ -205,6 +207,18 @@ def get_list_xero_contacts(
     xero_client: XeroHttpClient = Depends(get_xero_client),
 ) -> ListXeroContacts:
     return ListXeroContacts(xero_client=xero_client)
+
+
+def get_list_xero_accounts(
+    xero_client: XeroHttpClient = Depends(get_xero_client),
+) -> ListXeroAccounts:
+    return ListXeroAccounts(xero_client=xero_client)
+
+
+def get_list_xero_tax_rates(
+    xero_client: XeroHttpClient = Depends(get_xero_client),
+) -> ListXeroTaxRates:
+    return ListXeroTaxRates(xero_client=xero_client)
 
 
 def get_void_xero_invoice(

@@ -17,6 +17,12 @@ POST /v1/xero/invoices/{invoice_id}/void
 
 GET /v1/xero/contacts
     List contacts, optionally filtered by name.
+
+GET /v1/xero/accounts
+    List accounts (chart of accounts), optionally filtered by status.
+
+GET /v1/xero/tax-rates
+    List tax rates, optionally filtered by status.
 """
 
 from __future__ import annotations
@@ -31,7 +37,9 @@ from pydantic import BaseModel, Field
 from app.adapters.inbound.api.dependencies import (
     get_create_xero_draft_invoice,
     get_get_xero_invoice,
+    get_list_xero_accounts,
     get_list_xero_contacts,
+    get_list_xero_tax_rates,
     get_submit_xero_invoice,
     get_void_xero_invoice,
 )
@@ -40,7 +48,9 @@ from app.core.domain.xero import XeroInvoice, XeroLineItem
 from app.core.use_cases.xero import (
     CreateXeroDraftInvoice,
     GetXeroInvoice,
+    ListXeroAccounts,
     ListXeroContacts,
+    ListXeroTaxRates,
     SubmitXeroInvoice,
     VoidXeroInvoice,
 )
@@ -91,6 +101,29 @@ class ContactResponse(BaseModel):
 
 class ContactListResponse(BaseModel):
     contacts: list[ContactResponse]
+
+
+class AccountResponse(BaseModel):
+    account_id: str
+    code: str
+    name: str
+    type: str
+    status: str
+
+
+class AccountListResponse(BaseModel):
+    accounts: list[AccountResponse]
+
+
+class TaxRateResponse(BaseModel):
+    name: str
+    tax_type: str
+    status: str
+    effective_rate: float | None = None
+
+
+class TaxRateListResponse(BaseModel):
+    tax_rates: list[TaxRateResponse]
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -219,6 +252,59 @@ async def list_contacts(
     return ContactListResponse(
         contacts=[
             ContactResponse(contact_id=r.contact_id, name=r.name, email=r.email)
+            for r in results
+        ]
+    )
+
+
+@router.get("/accounts", response_model=AccountListResponse)
+async def list_accounts(
+    connection_id: str,
+    status: str | None = None,
+    use_case: ListXeroAccounts = Depends(get_list_xero_accounts),
+) -> AccountListResponse:
+    """List Xero accounts (chart of accounts).
+
+    Pass ?status=ACTIVE to return only active accounts, or ?status=ARCHIVED
+    for archived ones.  Omit for all accounts.
+    Returns account_id, code, name, type and status for each entry.
+    """
+    results = await use_case.execute(connection_id=connection_id, status=status)
+    return AccountListResponse(
+        accounts=[
+            AccountResponse(
+                account_id=r.account_id,
+                code=r.code,
+                name=r.name,
+                type=r.type,
+                status=r.status,
+            )
+            for r in results
+        ]
+    )
+
+
+@router.get("/tax-rates", response_model=TaxRateListResponse)
+async def list_tax_rates(
+    connection_id: str,
+    status: str | None = None,
+    use_case: ListXeroTaxRates = Depends(get_list_xero_tax_rates),
+) -> TaxRateListResponse:
+    """List Xero tax rates.
+
+    Pass ?status=ACTIVE to return only active tax rates, or ?status=DELETED
+    for deleted ones.  Omit for all tax rates.
+    Returns name, tax_type (use this in line items), status and effective_rate.
+    """
+    results = await use_case.execute(connection_id=connection_id, status=status)
+    return TaxRateListResponse(
+        tax_rates=[
+            TaxRateResponse(
+                name=r.name,
+                tax_type=r.tax_type,
+                status=r.status,
+                effective_rate=r.effective_rate,
+            )
             for r in results
         ]
     )

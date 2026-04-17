@@ -65,3 +65,24 @@ class XeroContactResult:
     contact_id: str
     name: str
     email: str | None
+
+
+@dataclass(frozen=True)
+class XeroAccountResult:
+    """A single Xero account (chart of accounts) entry."""
+
+    account_id: str
+    code: str
+    name: str
+    type: str
+    status: str
+
+
+@dataclass(frozen=True)
+class XeroTaxRateResult:
+    """A single Xero tax rate entry."""
+
+    name: str
+    tax_type: str
+    status: str
+    effective_rate: float | None

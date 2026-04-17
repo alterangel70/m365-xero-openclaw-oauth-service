@@ -57,3 +57,27 @@ class AbstractXeroClient(ABC):
 
         Returns the Xero API response body as a dict.
         """
+
+    @abstractmethod
+    async def list_accounts(
+        self,
+        connection_id: str,
+        status: str | None = None,
+    ) -> dict:
+        """GET accounts (chart of accounts) from Xero.
+
+        status: optional filter — 'ACTIVE' or 'ARCHIVED'.
+        Returns the Xero API response body as a dict.
+        """
+
+    @abstractmethod
+    async def list_tax_rates(
+        self,
+        connection_id: str,
+        status: str | None = None,
+    ) -> dict:
+        """GET tax rates from Xero.
+
+        status: optional filter — 'ACTIVE' or 'DELETED'.
+        Returns the Xero API response body as a dict.
+        """
