@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     # (no client secret needed for native/public app registrations).
     ms_tenant_id: str
     ms_client_id: str
-    ms_graph_scopes: str = "https://graph.microsoft.com/ChannelMessage.Send"
+    ms_graph_scopes: str = "offline_access https://graph.microsoft.com/ChannelMessage.Send"
     ms_default_connection_id: str = "ms-default"
 
     # ── Xero ──────────────────────────────────────────────────────────────────
