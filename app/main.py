@@ -7,6 +7,8 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from app.adapters.inbound.api.approvals import internal_router as approvals_internal_router
+from app.adapters.inbound.api.approvals import public_router as approvals_public_router
 from app.adapters.inbound.api.middleware import RequestIdMiddleware
 from app.adapters.inbound.api.oauth import router as oauth_router
 from app.adapters.inbound.api.teams import router as teams_router
@@ -161,6 +163,8 @@ async def lock_timeout_handler(
 app.include_router(teams_router)
 app.include_router(xero_router)
 app.include_router(oauth_router)
+app.include_router(approvals_internal_router)
+app.include_router(approvals_public_router)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────

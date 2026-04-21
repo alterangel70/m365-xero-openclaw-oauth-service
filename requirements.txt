@@ -20,3 +20,6 @@ python-multipart>=0.0.9
 
 # Structured logging handler for Seq
 seqlog>=0.3.24
+
+# HTML template rendering for approval pages
+jinja2>=3.1.0

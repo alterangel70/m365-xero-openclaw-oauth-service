@@ -49,3 +49,15 @@ class IdempotencyConflictError(IntegrationError):
     different inputs, so the new request cannot be safely replayed.
     Not expected at the current call volume; included for correctness.
     """
+
+
+class ApprovalNotFoundError(IntegrationError):
+    """No approval request was found for the given approvalId."""
+
+
+class DuplicateApprovalError(IntegrationError):
+    """An approval with the same approvalId but a different payload was already registered.
+
+    Callers must use a new, unique approvalId for each distinct invoice approval
+    request.  A retry with the *identical* payload is accepted idempotently.
+    """

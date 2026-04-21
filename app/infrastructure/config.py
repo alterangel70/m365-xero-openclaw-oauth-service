@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     seq_api_key: str = ""
     seq_min_level: str = "INFO"
 
+    # ── OpenClaw ──────────────────────────────────────────────────────────────
+    # Base URL of the local OpenClaw process used for the approval webhook.
+    # The path /hooks/agent is appended automatically.
+    openclaw_webhook_url: str = "http://127.0.0.1:18789"    # Bearer token sent in Authorization header when calling the OpenClaw webhook.
+    hook_token: str
     # ── Security ──────────────────────────────────────────────────────────────
     internal_api_key: str
 

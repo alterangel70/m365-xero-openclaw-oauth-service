@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Error — OpenClaw Approval</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f4f6f8;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 16px rgba(0,0,0,.10);
+      max-width: 440px;
+      width: 100%;
+      padding: 2.5rem 2rem;
+      text-align: center;
+    }
+
+    .icon {
+      font-size: 3rem;
+      line-height: 1;
+      margin-bottom: 1.25rem;
+    }
+
+    h1 {
+      font-size: 1.35rem;
+      color: #c0392b;
+      margin-bottom: .75rem;
+    }
+
+    .message {
+      font-size: .95rem;
+      color: #5f6368;
+      line-height: 1.6;
+    }
+
+    .hint {
+      margin-top: 1.5rem;
+      font-size: .82rem;
+      color: #80868b;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">⚠️</div>
+    <h1>Something went wrong</h1>
+    <p class="message">{{ message }}</p>
+    <p class="hint">
+      If you believe this is an error, please contact your administrator.
+    </p>
+  </div>
+</body>
+</html>

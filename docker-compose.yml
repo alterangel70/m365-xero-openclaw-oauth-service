@@ -14,6 +14,8 @@ services:
       - .env
     # --reload watches for file changes; enabled here for development.
     # In production, remove --reload and the bind mount above.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     command: uvicorn app.main:app --host 0.0.0.0 --port 18432 --reload
     depends_on:
       redis:

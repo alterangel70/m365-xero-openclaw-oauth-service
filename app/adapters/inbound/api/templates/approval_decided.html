@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Invoice {{ approval.status | capitalize }} — OpenClaw</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #f4f6f8;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1rem;
+    }
+
+    .card {
+      background: #fff;
+      border-radius: 10px;
+      box-shadow: 0 2px 16px rgba(0,0,0,.10);
+      max-width: 480px;
+      width: 100%;
+      padding: 2.5rem 2rem;
+    }
+
+    .icon {
+      font-size: 3rem;
+      line-height: 1;
+      margin-bottom: 1.25rem;
+    }
+
+    h1 {
+      font-size: 1.45rem;
+      margin-bottom: .5rem;
+      line-height: 1.3;
+    }
+    h1.approved { color: #1e7e34; }
+    h1.rejected { color: #c0392b; }
+
+    .subtitle {
+      font-size: .95rem;
+      color: #5f6368;
+      margin-bottom: 2rem;
+    }
+
+    .details {
+      border: 1px solid #e8eaed;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 1.75rem;
+    }
+    .details__row {
+      display: flex;
+      padding: .75rem 1rem;
+      border-bottom: 1px solid #e8eaed;
+    }
+    .details__row:last-child { border-bottom: none; }
+    .details__label {
+      width: 140px;
+      flex-shrink: 0;
+      font-size: .85rem;
+      font-weight: 600;
+      color: #5f6368;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .details__value {
+      font-size: .95rem;
+      color: #202124;
+      word-break: break-word;
+    }
+
+    .status-badge {
+      display: inline-block;
+      padding: .15rem .6rem;
+      border-radius: 99px;
+      font-size: .8rem;
+      font-weight: 600;
+    }
+    .status-badge--approved { background: #e6f4ea; color: #1e7e34; }
+    .status-badge--rejected { background: #fdecea; color: #c0392b; }
+
+    .webhook-notice {
+      margin-top: 1rem;
+      padding: .75rem 1rem;
+      border-radius: 8px;
+      font-size: .85rem;
+    }
+    .webhook-notice--ok      { background: #e6f4ea; color: #1e7e34; }
+    .webhook-notice--warning { background: #fff3cd; color: #856404; }
+
+    .hint {
+      margin-top: 1.5rem;
+      font-size: .82rem;
+      color: #80868b;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    {% if approval.status == "approved" %}
+      <div class="icon">✅</div>
+      <h1 class="approved">Invoice approved</h1>
+      <p class="subtitle">
+        {% if just_decided %}
+          Your approval has been recorded and OpenClaw has been notified.
+        {% else %}
+          This invoice was already approved.  No further action is required.
+        {% endif %}
+      </p>
+    {% else %}
+      <div class="icon">❌</div>
+      <h1 class="rejected">Invoice rejected</h1>
+      <p class="subtitle">
+        {% if just_decided %}
+          Your rejection has been recorded and OpenClaw has been notified.
+        {% else %}
+          This invoice was already rejected.  No further action is required.
+        {% endif %}
+      </p>
+    {% endif %}
+
+    <div class="details">
+      <div class="details__row">
+        <span class="details__label">Supplier</span>
+        <span class="details__value">{{ approval.supplier_name }}</span>
+      </div>
+      <div class="details__row">
+        <span class="details__label">Invoice #</span>
+        <span class="details__value">{{ approval.invoice_number }}</span>
+      </div>
+      <div class="details__row">
+        <span class="details__label">Decision</span>
+        <span class="details__value">
+          <span class="status-badge status-badge--{{ approval.status }}">
+            {{ approval.status | capitalize }}
+          </span>
+        </span>
+      </div>
+      {% if approval.decided_at %}
+      <div class="details__row">
+        <span class="details__label">Decided at</span>
+        <span class="details__value">{{ approval.decided_at.strftime("%Y-%m-%d %H:%M UTC") }}</span>
+      </div>
+      {% endif %}
+    </div>
+
+    {% if just_decided %}
+      {% if approval.webhook_result == "ok" %}
+        <div class="webhook-notice webhook-notice--ok">
+          ✓ OpenClaw has been notified and will resume the invoice pipeline.
+        </div>
+      {% else %}
+        <div class="webhook-notice webhook-notice--warning">
+          ⚠ Your decision was saved, but the OpenClaw notification encountered an issue
+          ({{ approval.webhook_result }}).  The pipeline will retry automatically.
+        </div>
+      {% endif %}
+    {% endif %}
+
+    <p class="hint">You may safely close this window.</p>
+  </div>
+</body>
+</html>

@@ -11,16 +11,19 @@ assembles already-implemented classes and passes them through the DI chain.
 
 from fastapi import Depends, Request
 
+from app.adapters.outbound.approval_store.redis_approval_store import RedisApprovalStore
 from app.adapters.outbound.lock.redis_lock import RedisLockManager
 from app.adapters.outbound.ms_graph.client import MSGraphClient
 from app.adapters.outbound.ms_graph.device_code_client import MSDeviceCodeClient
 from app.adapters.outbound.ms_graph.token_manager import MSTokenManager
+from app.adapters.outbound.openclaw.webhook_client import OpenClawWebhookClient
 from app.adapters.outbound.token_store.redis_idempotency_store import RedisIdempotencyStore
 from app.adapters.outbound.token_store.redis_token_store import RedisTokenStore
 from app.adapters.outbound.xero.client import XeroHttpClient
 from app.adapters.outbound.token_store.redis_oauth_state_store import RedisOAuthStateStore
 from app.adapters.outbound.xero.oauth_client import XeroAuthlibOAuthClient
 from app.adapters.outbound.xero.token_manager import XeroTokenManager
+from app.core.use_cases.approval import GetApproval, RecordDecision, RegisterApproval
 from app.core.use_cases.oauth import (
     BuildXeroAuthorizationUrl,
     GetConnectionStatus,
@@ -305,4 +308,44 @@ def get_poll_ms_device_code(
     return PollMSDeviceCodeFlow(
         ms_device_code_client=device_code_client,
         token_store=token_store,
+    )
+
+
+# ── Approval flow ─────────────────────────────────────────────────────────────
+
+
+def get_approval_store(redis=Depends(get_redis)) -> RedisApprovalStore:
+    return RedisApprovalStore(redis)
+
+
+def get_openclaw_webhook_client(
+    http_client=Depends(get_http_client),
+    settings: Settings = Depends(get_settings),
+) -> OpenClawWebhookClient:
+    return OpenClawWebhookClient(
+        http_client=http_client,
+        webhook_base_url=settings.openclaw_webhook_url,
+        token=settings.hook_token,
+    )
+
+
+def get_register_approval(
+    approval_store: RedisApprovalStore = Depends(get_approval_store),
+) -> RegisterApproval:
+    return RegisterApproval(approval_store=approval_store)
+
+
+def get_get_approval(
+    approval_store: RedisApprovalStore = Depends(get_approval_store),
+) -> GetApproval:
+    return GetApproval(approval_store=approval_store)
+
+
+def get_record_decision(
+    approval_store: RedisApprovalStore = Depends(get_approval_store),
+    webhook_client: OpenClawWebhookClient = Depends(get_openclaw_webhook_client),
+) -> RecordDecision:
+    return RecordDecision(
+        approval_store=approval_store,
+        webhook_client=webhook_client,
     )
