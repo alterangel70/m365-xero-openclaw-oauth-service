@@ -18,11 +18,12 @@ class XeroLineItem:
 
 @dataclass(frozen=True)
 class XeroInvoice:
-    """The data required to create or represent a Xero invoice (type ACCREC).
+    """The data required to create or represent a Xero invoice (type ACCPAY).
 
     This value object is passed from OpenClaw to the use case layer.
     The use case translates it into the Xero REST API payload format
-    before calling the adapter.
+    before calling the adapter. Only Bills / Purchases (ACCPAY) are valid;
+    Sales invoices (ACCREC) must never be created through this service.
     """
 
     contact_id: str

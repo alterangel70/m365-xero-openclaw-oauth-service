@@ -23,6 +23,7 @@ import logging
 from decimal import Decimal
 
 from app.core.domain.xero import XeroInvoice
+from app.core.errors import ProviderUnavailableError
 from app.core.ports.idempotency_store import AbstractIdempotencyStore
 from app.core.ports.xero_client import AbstractXeroClient
 from app.core.use_cases.results import (
@@ -40,10 +41,17 @@ _OP_SUBMIT_INVOICE = "submit_xero_invoice"
 _OP_VOID_INVOICE = "void_xero_invoice"
 
 
+_INVOICE_TYPE = "ACCPAY"  # Bills / Purchases only. ACCREC (Sales) is never created here.
+
+
 def _invoice_payload(invoice: XeroInvoice) -> dict:
-    """Convert a XeroInvoice domain object to the Xero API request body."""
-    return {
-        "Type": "ACCREC",
+    """Convert a XeroInvoice domain object to the Xero API request body.
+
+    Always produces Type=ACCPAY (Bill/Purchase). ACCREC is never valid here.
+    Raises ValueError if the assembled payload somehow carries the wrong type.
+    """
+    payload = {
+        "Type": _INVOICE_TYPE,
         "Contact": {"ContactID": invoice.contact_id},
         "DueDate": invoice.due_date.isoformat(),
         "CurrencyCode": invoice.currency_code,
@@ -60,6 +68,12 @@ def _invoice_payload(invoice: XeroInvoice) -> dict:
             for li in invoice.line_items
         ],
     }
+    if payload["Type"] != _INVOICE_TYPE:
+        raise ValueError(
+            f"Invoice payload type must be {_INVOICE_TYPE!r}, got {payload['Type']!r}. "
+            "ACCREC (Sales invoices) must never be created through this service."
+        )
+    return payload
 
 
 def _extract_invoice_result(response: dict) -> XeroInvoiceResult:
@@ -108,6 +122,12 @@ class CreateXeroDraftInvoice:
             payload=payload,
         )
         result = _extract_invoice_result(response)
+        returned_type = response["Invoices"][0].get("Type")
+        if returned_type != _INVOICE_TYPE:
+            raise ProviderUnavailableError(
+                f"Xero created invoice with type {returned_type!r} instead of "
+                f"{_INVOICE_TYPE!r}. Manual review required — invoice_id={result.invoice_id}"
+            )
 
         await self._idempotency_store.set(
             idem_key,
