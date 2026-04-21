@@ -13,7 +13,11 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.domain.approval import ApprovalRequest
-from app.core.errors import ApprovalNotFoundError, DuplicateApprovalError
+from app.core.errors import (
+    ApprovalNotFoundError,
+    DuplicateApprovalError,
+    InvalidDecisionError,
+)
 from app.core.use_cases.approval import GetApproval, RecordDecision, RegisterApproval
 
 # ── Shared fixtures & constants ───────────────────────────────────────────────
@@ -43,7 +47,7 @@ def _make_pending() -> ApprovalRequest:
     )
 
 
-def _make_decided(status: str) -> ApprovalRequest:
+def _make_resolved(decision: str, note: str | None = None) -> ApprovalRequest:
     return ApprovalRequest(
         approval_id=APPROVAL_ID,
         invoice_case_id=INVOICE_CASE_ID,
@@ -52,7 +56,9 @@ def _make_decided(status: str) -> ApprovalRequest:
         supplier_name=SUPPLIER_NAME,
         approve_url=APPROVE_URL,
         reject_url=REJECT_URL,
-        status=status,  # type: ignore[arg-type]
+        status="resolved",
+        decision=decision,  # type: ignore[arg-type]
+        note=note,
         created_at=_CREATED_AT,
         decided_at=_DECIDED_AT,
         decision_source="web_form",
@@ -96,6 +102,7 @@ class TestRegisterApproval:
 
         assert result.approval_id == APPROVAL_ID
         assert result.status == "pending"
+        assert result.decision is None
         assert result.invoice_number == INVOICE_NUMBER
         assert result.supplier_name == SUPPLIER_NAME
         assert result.decided_at is None
@@ -194,7 +201,8 @@ class TestRecordDecision:
 
         result = await use_case.execute(APPROVAL_ID, "approved")
 
-        assert result.status == "approved"
+        assert result.status == "resolved"
+        assert result.decision == "approved"
         assert result.decided_at is not None
         assert result.decision_source == "web_form"
         assert result.webhook_result == "ok"
@@ -208,8 +216,48 @@ class TestRecordDecision:
 
         result = await use_case.execute(APPROVAL_ID, "rejected")
 
-        assert result.status == "rejected"
+        assert result.status == "resolved"
+        assert result.decision == "rejected"
         assert result.webhook_result == "ok"
+
+    async def test_needs_changes_with_note_persisted(
+        self, use_case, mock_store, mock_webhook
+    ):
+        mock_store.load.return_value = _make_pending()
+
+        result = await use_case.execute(
+            APPROVAL_ID, "needs_changes", note="Please fix the line items."
+        )
+
+        assert result.status == "resolved"
+        assert result.decision == "needs_changes"
+        assert result.note == "Please fix the line items."
+        assert result.webhook_result == "ok"
+        mock_store.save.assert_awaited_once()
+
+    async def test_needs_changes_without_note_raises(
+        self, use_case, mock_store, mock_webhook
+    ):
+        mock_store.load.return_value = _make_pending()
+
+        with pytest.raises(InvalidDecisionError, match="note is required"):
+            await use_case.execute(APPROVAL_ID, "needs_changes", note=None)
+
+    async def test_needs_changes_with_blank_note_raises(
+        self, use_case, mock_store, mock_webhook
+    ):
+        mock_store.load.return_value = _make_pending()
+
+        with pytest.raises(InvalidDecisionError, match="note is required"):
+            await use_case.execute(APPROVAL_ID, "needs_changes", note="   ")
+
+    async def test_invalid_decision_value_raises(
+        self, use_case, mock_store, mock_webhook
+    ):
+        mock_store.load.return_value = _make_pending()
+
+        with pytest.raises(InvalidDecisionError, match="Invalid decision"):
+            await use_case.execute(APPROVAL_ID, "ACCREC")
 
     async def test_custom_decision_source_stored(
         self, use_case, mock_store, mock_webhook
@@ -220,27 +268,29 @@ class TestRecordDecision:
 
         assert result.decision_source == "api"
 
-    async def test_already_decided_returns_stored_without_webhook(
+    async def test_already_resolved_returns_stored_without_webhook(
         self, use_case, mock_store, mock_webhook
     ):
-        decided = _make_decided("approved")
-        mock_store.load.return_value = decided
+        resolved = _make_resolved("approved")
+        mock_store.load.return_value = resolved
 
         result = await use_case.execute(APPROVAL_ID, "approved")
 
-        assert result is decided
+        assert result is resolved
         mock_store.save.assert_not_awaited()
         mock_webhook.notify_decision.assert_not_awaited()
 
-    async def test_already_rejected_returns_stored_without_webhook(
+    async def test_already_resolved_needs_changes_returns_stored_without_webhook(
         self, use_case, mock_store, mock_webhook
     ):
-        decided = _make_decided("rejected")
-        mock_store.load.return_value = decided
+        resolved = _make_resolved("needs_changes", note="Fix amounts")
+        mock_store.load.return_value = resolved
 
-        result = await use_case.execute(APPROVAL_ID, "rejected")
+        result = await use_case.execute(
+            APPROVAL_ID, "needs_changes", note="Fix amounts"
+        )
 
-        assert result is decided
+        assert result is resolved
         mock_store.save.assert_not_awaited()
 
     async def test_not_found_raises(self, use_case, mock_store):
@@ -257,12 +307,28 @@ class TestRecordDecision:
 
         result = await use_case.execute(APPROVAL_ID, "approved")
 
-        # The decision is still recorded even when the webhook fails.
-        assert result.status == "approved"
+        assert result.status == "resolved"
+        assert result.decision == "approved"
         assert result.webhook_result == "HTTP 503"
         mock_store.save.assert_awaited_once()
 
-    async def test_webhook_notify_called_with_correct_approval_and_decision(
+    async def test_webhook_notify_called_with_correct_args(
+        self, use_case, mock_store, mock_webhook
+    ):
+        pending = _make_pending()
+        mock_store.load.return_value = pending
+
+        await use_case.execute(
+            APPROVAL_ID, "needs_changes", note="Wrong amounts"
+        )
+
+        mock_webhook.notify_decision.assert_awaited_once_with(
+            approval=pending,
+            decision="needs_changes",
+            note="Wrong amounts",
+        )
+
+    async def test_webhook_called_with_none_note_for_rejected(
         self, use_case, mock_store, mock_webhook
     ):
         pending = _make_pending()
@@ -273,4 +339,6 @@ class TestRecordDecision:
         mock_webhook.notify_decision.assert_awaited_once_with(
             approval=pending,
             decision="rejected",
+            note=None,
         )
+

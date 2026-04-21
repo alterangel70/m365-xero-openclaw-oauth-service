@@ -18,6 +18,7 @@ class AbstractOpenClawWebhookClient(ABC):
         self,
         approval: ApprovalRequest,
         decision: str,
+        note: str | None = None,
     ) -> str:
         """Send the decision to OpenClaw and return "ok" or an error string.
 
@@ -27,7 +28,9 @@ class AbstractOpenClawWebhookClient(ABC):
             The decided approval record (read-only; the record is already
             saved before this call is made).
         decision:
-            "approved" or "rejected".
+            "approved", "needs_changes", or "rejected".
+        note:
+            Reviewer note; required when decision is "needs_changes".
 
         Returns
         -------

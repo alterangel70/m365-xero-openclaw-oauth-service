@@ -12,7 +12,7 @@ from datetime import datetime
 
 import redis.asyncio as aioredis
 
-from app.core.domain.approval import ApprovalRequest, ApprovalStatus
+from app.core.domain.approval import ApprovalRequest, ApprovalStatus, ApprovalDecision
 from app.core.ports.approval_store import AbstractApprovalStore
 
 _KEY_PREFIX = "approval"
@@ -37,6 +37,8 @@ def _to_mapping(approval: ApprovalRequest) -> dict[str, str]:
         "approve_url": approval.approve_url,
         "reject_url": approval.reject_url,
         "status": approval.status,
+        "decision": approval.decision or _ABSENT,
+        "note": approval.note or _ABSENT,
         "created_at": approval.created_at.isoformat(),
         "decided_at": (
             approval.decided_at.isoformat() if approval.decided_at else _ABSENT
@@ -52,7 +54,20 @@ def _to_mapping(approval: ApprovalRequest) -> dict[str, str]:
 
 
 def _from_mapping(data: dict[str, str]) -> ApprovalRequest:
-    """Deserialize a Redis hash back into an immutable ApprovalRequest."""
+    """Deserialize a Redis hash back into an immutable ApprovalRequest.
+
+    Backward compat: records written before the needs_changes refactor stored
+    status as "approved" or "rejected" directly.  These are migrated on read
+    to status="resolved" with the old value promoted to decision.
+    """
+    raw_status = data["status"]
+    # Migrate old-style records (status was the decision value).
+    if raw_status in ("approved", "rejected"):
+        status: ApprovalStatus = "resolved"
+        decision: ApprovalDecision | None = raw_status  # type: ignore[assignment]
+    else:
+        status = raw_status  # type: ignore[assignment]
+        decision = data.get("decision") or None  # type: ignore[assignment]
     return ApprovalRequest(
         approval_id=data["approval_id"],
         invoice_case_id=data["invoice_case_id"],
@@ -61,7 +76,9 @@ def _from_mapping(data: dict[str, str]) -> ApprovalRequest:
         supplier_name=data["supplier_name"],
         approve_url=data["approve_url"],
         reject_url=data["reject_url"],
-        status=data["status"],  # type: ignore[arg-type]
+        status=status,
+        decision=decision,
+        note=data.get("note") or None,
         created_at=datetime.fromisoformat(data["created_at"]),
         decided_at=(
             datetime.fromisoformat(data["decided_at"])

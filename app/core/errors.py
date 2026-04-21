@@ -61,3 +61,12 @@ class DuplicateApprovalError(IntegrationError):
     Callers must use a new, unique approvalId for each distinct invoice approval
     request.  A retry with the *identical* payload is accepted idempotently.
     """
+
+
+class InvalidDecisionError(IntegrationError):
+    """The supplied decision value or its accompanying data is invalid.
+
+    Raised when:
+    - decision is not one of approved / needs_changes / rejected.
+    - decision is needs_changes but no note was provided.
+    """

@@ -40,7 +40,7 @@ from app.adapters.inbound.api.dependencies import (
     get_register_approval,
 )
 from app.adapters.inbound.api.middleware import verify_api_key
-from app.core.errors import ApprovalNotFoundError, DuplicateApprovalError
+from app.core.errors import ApprovalNotFoundError, DuplicateApprovalError, InvalidDecisionError
 from app.core.use_cases.approval import GetApproval, RecordDecision, RegisterApproval
 
 logger = logging.getLogger(__name__)
@@ -210,29 +210,42 @@ async def _render_decision_page(
 @public_router.post(
     "/{approval_id}/decision",
     response_class=HTMLResponse,
-    summary="Record an approve/reject decision",
+    summary="Record an approve/reject/needs-changes decision",
     include_in_schema=False,
 )
 async def record_decision(
     request: Request,
     approval_id: str,
     decision: str = Form(...),
+    note: str | None = Form(None),
     use_case: RecordDecision = Depends(get_record_decision),
 ) -> HTMLResponse:
     """Receive the HTML form submission and persist the decision.
 
-    The ``decision`` field must be ``"approved"`` or ``"rejected"``.
+    The ``decision`` field must be ``"approved"``, ``"needs_changes"``, or
+    ``"rejected"``.
+    When ``decision`` is ``"needs_changes"`` the ``note`` field is required.
     After persisting, the OpenClaw webhook is called to resume the pipeline,
     and a final status page is rendered.
 
     Idempotent: re-submitting the same form returns the stored final page
     without re-calling the webhook.
     """
-    if decision not in ("approved", "rejected"):
+    if decision not in ("approved", "needs_changes", "rejected"):
         return _templates.TemplateResponse(
             request,
             "approval_error.html",
-            {"message": "Invalid decision value. Expected 'approved' or 'rejected'."},
+            {"message": "Invalid decision value."},
+            status_code=400,
+        )
+
+    # Backend validation mirrors what the frontend enforces.
+    clean_note = note.strip() if note else None
+    if decision == "needs_changes" and not clean_note:
+        return _templates.TemplateResponse(
+            request,
+            "approval_error.html",
+            {"message": "A note is required when requesting changes."},
             status_code=400,
         )
 
@@ -240,6 +253,7 @@ async def record_decision(
         approval = await use_case.execute(
             approval_id=approval_id,
             decision=decision,
+            note=clean_note,
             decision_source="web_form",
         )
     except ApprovalNotFoundError:
@@ -250,10 +264,14 @@ async def record_decision(
             {"message": "Approval request not found."},
             status_code=404,
         )
+    except InvalidDecisionError as exc:
+        return _templates.TemplateResponse(
+            request,
+            "approval_error.html",
+            {"message": str(exc)},
+            status_code=400,
+        )
 
-    # just_decided=True only for the initial decision; idempotent retries where
-    # approval.status was already final are also safe to show as just_decided=True
-    # because the page is idempotent and informative.
     return _templates.TemplateResponse(
         request,
         "approval_decided.html",

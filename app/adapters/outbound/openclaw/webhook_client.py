@@ -55,6 +55,7 @@ class OpenClawWebhookClient(AbstractOpenClawWebhookClient):
         self,
         approval: ApprovalRequest,
         decision: str,
+        note: str | None = None,
     ) -> str:
         """POST the decision to OpenClaw and return ``"ok"`` or an error string.
 
@@ -71,7 +72,7 @@ class OpenClawWebhookClient(AbstractOpenClawWebhookClient):
                 f"invoiceCaseId={approval.invoice_case_id}\n"
                 f"pdf_path={approval.pdf_path}\n"
                 f"action={decision}\n"
-                "note=resume after approval service decision"
+                f"note={note or ''}"
             ),
             "name": "Invoice approval callback",
             "wakeMode": "now",

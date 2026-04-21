@@ -37,8 +37,9 @@
       margin-bottom: .5rem;
       line-height: 1.3;
     }
-    h1.approved { color: #1e7e34; }
-    h1.rejected { color: #c0392b; }
+    h1.approved      { color: #1e7e34; }
+    h1.rejected      { color: #c0392b; }
+    h1.needs_changes { color: #e67e22; }
 
     .subtitle {
       font-size: .95rem;
@@ -80,8 +81,9 @@
       font-size: .8rem;
       font-weight: 600;
     }
-    .status-badge--approved { background: #e6f4ea; color: #1e7e34; }
-    .status-badge--rejected { background: #fdecea; color: #c0392b; }
+    .status-badge--approved      { background: #e6f4ea; color: #1e7e34; }
+    .status-badge--rejected      { background: #fdecea; color: #c0392b; }
+    .status-badge--needs_changes { background: #fef5e7; color: #e67e22; }
 
     .webhook-notice {
       margin-top: 1rem;
@@ -102,7 +104,7 @@
 </head>
 <body>
   <div class="card">
-    {% if approval.status == "approved" %}
+    {% if approval.decision == "approved" %}
       <div class="icon">✅</div>
       <h1 class="approved">Invoice approved</h1>
       <p class="subtitle">
@@ -110,6 +112,16 @@
           Your approval has been recorded and OpenClaw has been notified.
         {% else %}
           This invoice was already approved.  No further action is required.
+        {% endif %}
+      </p>
+    {% elif approval.decision == "needs_changes" %}
+      <div class="icon">🔄</div>
+      <h1 class="needs_changes">Changes requested</h1>
+      <p class="subtitle">
+        {% if just_decided %}
+          Your request for changes has been recorded and OpenClaw has been notified.
+        {% else %}
+          Changes were already requested for this invoice.  No further action is required.
         {% endif %}
       </p>
     {% else %}
@@ -136,8 +148,8 @@
       <div class="details__row">
         <span class="details__label">Decision</span>
         <span class="details__value">
-          <span class="status-badge status-badge--{{ approval.status }}">
-            {{ approval.status | capitalize }}
+          <span class="status-badge status-badge--{{ approval.decision }}">
+            {{ approval.decision | replace("_", " ") | title }}
           </span>
         </span>
       </div>
@@ -145,6 +157,12 @@
       <div class="details__row">
         <span class="details__label">Decided at</span>
         <span class="details__value">{{ approval.decided_at.strftime("%Y-%m-%d %H:%M UTC") }}</span>
+      </div>
+      {% endif %}
+      {% if approval.note %}
+      <div class="details__row">
+        <span class="details__label">Note</span>
+        <span class="details__value">{{ approval.note }}</span>
       </div>
       {% endif %}
     </div>

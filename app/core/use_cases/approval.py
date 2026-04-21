@@ -12,7 +12,7 @@ import logging
 from datetime import datetime, timezone
 
 from app.core.domain.approval import ApprovalRequest
-from app.core.errors import ApprovalNotFoundError, DuplicateApprovalError
+from app.core.errors import ApprovalNotFoundError, DuplicateApprovalError, InvalidDecisionError
 from app.core.ports.approval_store import AbstractApprovalStore
 from app.core.ports.openclaw_webhook_client import AbstractOpenClawWebhookClient
 
@@ -135,6 +135,7 @@ class RecordDecision:
         self,
         approval_id: str,
         decision: str,
+        note: str | None = None,
         decision_source: str = "web_form",
     ) -> ApprovalRequest:
         approval = await self._store.load(approval_id)
@@ -152,12 +153,24 @@ class RecordDecision:
             )
             return approval
 
+        if decision not in ("approved", "needs_changes", "rejected"):
+            raise InvalidDecisionError(
+                f"Invalid decision {decision!r}. "
+                "Must be 'approved', 'needs_changes', or 'rejected'."
+            )
+
+        if decision == "needs_changes" and not (note and note.strip()):
+            raise InvalidDecisionError(
+                "A note is required when decision is 'needs_changes'."
+            )
+
         now = datetime.now(tz=timezone.utc)
 
         # Notify OpenClaw; the client never raises — errors become strings.
         webhook_result = await self._webhook.notify_decision(
             approval=approval,
             decision=decision,
+            note=note,
         )
 
         updated = ApprovalRequest(
@@ -168,7 +181,9 @@ class RecordDecision:
             supplier_name=approval.supplier_name,
             approve_url=approval.approve_url,
             reject_url=approval.reject_url,
-            status=decision,  # type: ignore[arg-type]
+            status="resolved",
+            decision=decision,  # type: ignore[arg-type]
+            note=note.strip() if note else None,
             created_at=approval.created_at,
             decided_at=now,
             decision_source=decision_source,

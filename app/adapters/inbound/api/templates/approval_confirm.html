@@ -106,6 +106,39 @@
       color: #80868b;
       text-align: center;
     }
+
+    /* ── Reject outcome form ───────────────────────────────────────────────── */
+    .field { margin-bottom: 1.25rem; }
+    .field label {
+      display: block;
+      font-size: .85rem;
+      font-weight: 600;
+      color: #5f6368;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      margin-bottom: .4rem;
+    }
+    .field label .required { color: #c0392b; margin-left: .15rem; }
+    .field select,
+    .field textarea {
+      width: 100%;
+      padding: .65rem .9rem;
+      border: 1px solid #dadce0;
+      border-radius: 8px;
+      font-size: .95rem;
+      font-family: inherit;
+      color: #202124;
+      background: #fff;
+      transition: border-color .15s;
+    }
+    .field select:focus,
+    .field textarea:focus {
+      outline: none;
+      border-color: #c0392b;
+      box-shadow: 0 0 0 3px rgba(192,57,43,.12);
+    }
+    .field textarea { resize: vertical; min-height: 90px; }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
   </style>
 </head>
 <body>
@@ -138,14 +171,59 @@
     </div>
 
     {# POST the decision; no raw IDs are exposed beyond the approvalId in the URL #}
-    <form method="POST" action="/approvals/{{ approval.approval_id }}/decision">
-      <input type="hidden" name="decision"
-             value="{{ 'approved' if action == 'approve' else 'rejected' }}" />
-      <button type="submit"
-              class="btn {{ 'btn--approve' if action == 'approve' else 'btn--reject' }}">
-        Confirm {{ "Approval" if action == "approve" else "Rejection" }}
-      </button>
-    </form>
+    {% if action == "approve" %}
+      <form method="POST" action="/approvals/{{ approval.approval_id }}/decision">
+        <input type="hidden" name="decision" value="approved" />
+        <button type="submit" class="btn btn--approve">Confirm Approval</button>
+      </form>
+    {% else %}
+      <form method="POST" action="/approvals/{{ approval.approval_id }}/decision"
+            id="reject-form" novalidate>
+        <div class="field">
+          <label for="decision">Outcome <span class="required">*</span></label>
+          <select name="decision" id="decision" required
+                  onchange="handleOutcomeChange(this.value)">
+            <option value="" disabled selected>Select an outcome</option>
+            <option value="needs_changes">Request changes and retry</option>
+            <option value="rejected">Reject without retry</option>
+          </select>
+        </div>
+        <div class="field" id="note-field" style="display:none">
+          <label for="note">Note <span class="required">*</span></label>
+          <textarea name="note" id="note" rows="4"
+                    placeholder="Describe what changes are needed…"></textarea>
+        </div>
+        <button type="submit" class="btn btn--reject" id="submit-btn" disabled>
+          Confirm
+        </button>
+      </form>
+
+      <script>
+        function handleOutcomeChange(value) {
+          var noteField = document.getElementById('note-field');
+          var noteInput = document.getElementById('note');
+          var submitBtn = document.getElementById('submit-btn');
+          if (value === 'needs_changes') {
+            noteField.style.display = 'block';
+            noteInput.required = true;
+          } else {
+            noteField.style.display = 'none';
+            noteInput.required = false;
+            noteInput.value = '';
+          }
+          submitBtn.disabled = false;
+        }
+        document.getElementById('reject-form').addEventListener('submit', function (e) {
+          var decision = document.getElementById('decision').value;
+          var note = document.getElementById('note').value.trim();
+          if (!decision) { e.preventDefault(); return; }
+          if (decision === 'needs_changes' && !note) {
+            e.preventDefault();
+            document.getElementById('note').focus();
+          }
+        });
+      </script>
+    {% endif %}
 
     <p class="hint">
       This action cannot be undone.  Your decision will be sent to OpenClaw immediately.
