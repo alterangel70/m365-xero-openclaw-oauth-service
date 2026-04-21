@@ -1,59 +1,59 @@
 # Data Reference — openclaw-m365-xero-integration-service
 
-Referencia de configuración, tiempos de vida y estructuras de datos en Redis.
+Configuration, token lifetimes, and Redis data structures reference.
 
 ---
 
-## Configuración relevante (.env / Settings)
+## Key configuration (.env / Settings)
 
-| Variable | Default | Descripción |
+| Variable | Default | Description |
 |---|---|---|
-| `REFRESH_BUFFER_SECONDS` | `300` | Segundos antes de la expiración en que se hace refresh proactivo del token |
-| `OAUTH_STATE_TTL_SECONDS` | `600` | Duración del estado CSRF durante el OAuth dance de Xero (10 min) |
-| `IDEMPOTENCY_TTL_SECONDS` | `86400` | Caché de resultados de operaciones write (24 h) |
-| `REDIS_URL` | `redis://redis:6379/0` | Conexión Redis |
-| `MS_DEFAULT_CONNECTION_ID` | `ms-default` | connection_id por defecto para Microsoft |
+| `REFRESH_BUFFER_SECONDS` | `300` | Seconds before token expiry at which a proactive refresh is triggered |
+| `OAUTH_STATE_TTL_SECONDS` | `600` | Lifetime of the CSRF state during the Xero OAuth dance (10 min) |
+| `IDEMPOTENCY_TTL_SECONDS` | `86400` | Cache lifetime for write operation results (24 h) |
+| `REDIS_URL` | `redis://redis:6379/0` | Redis connection URL |
+| `MS_DEFAULT_CONNECTION_ID` | `ms-default` | Default connection_id used for Microsoft |
 
 ---
 
-## Tokens: tiempos de vida
+## Token lifetimes
 
 ### Xero (authorization_code flow)
-- **access_token**: expira en **30 minutos** (Xero estándar). El `expires_at` exacto se almacena en Redis.
-- **refresh_token**: rotatorio. Xero invalida el anterior en cuanto se hace un refresh. Sin fecha de expiración oficial, pero prácticamente caduca si no se usa en ~60 días.
-- **Refresh proactivo**: se activa cuando `now + REFRESH_BUFFER_SECONDS (300s) >= expires_at`, es decir, 5 minutos antes de caducar.
-- **Lock de refresh**: TTL = 30 s. Previene que dos workers refresquen a la vez con el mismo refresh_token.
+- **access_token**: expires in **30 minutes** (Xero standard). The exact `expires_at` is stored in Redis.
+- **refresh_token**: rotating. Xero invalidates the previous one immediately upon refresh. No official expiry, but practically expires if unused for ~60 days.
+- **Proactive refresh**: triggered when `now + REFRESH_BUFFER_SECONDS (300s) >= expires_at`, i.e. 5 minutes before expiry.
+- **Refresh lock**: TTL = 30 s. Prevents two workers from refreshing concurrently with the same refresh_token.
 
 ### Microsoft Graph (device-code / delegated flow)
-- **access_token**: expira en **1 hora** (Azure estándar). El `expires_at` exacto se almacena en Redis.
-- **refresh_token**: present — se usa para renovar sin intervención del operador.
-- **Mismo REFRESH_BUFFER_SECONDS** y mismo mecanismo de lock que Xero.
-- La autorización inicial requiere que un operador complete el device-code flow una sola vez.
+- **access_token**: expires in **1 hour** (Azure standard). The exact `expires_at` is stored in Redis.
+- **refresh_token**: present — used to silently renew without operator involvement.
+- **Same `REFRESH_BUFFER_SECONDS`** and same lock mechanism as Xero.
+- Initial authorization requires an operator to complete the device-code flow once.
 
 ---
 
-## Estructuras Redis
+## Redis structures
 
 ### 1. `token:{connection_id}` — Hash
 
-Almacena el TokenSet de una conexión OAuth (Xero o Microsoft).
+Stores the TokenSet for an OAuth connection (Xero or Microsoft).
 
-| Campo Redis | Tipo | Ejemplo | Notas |
+| Redis field | Type | Example | Notes |
 |---|---|---|---|
-| `access_token` | string | `eyJ0eXAiOiJKV1...` | Bearer token para llamadas a la API |
-| `refresh_token` | string | `1/fFAGRNJru...` o `""` | `""` = ausente (MS client_credentials no tiene) |
-| `expires_at` | ISO-8601 UTC | `2026-04-21T14:35:00+00:00` | Momento exacto de expiración |
-| `token_type` | string | `Bearer` | Siempre `Bearer` |
-| `scope` | string | `offline_access accounting.invoices` o `""` | `""` = ausente |
-| `xero_tenant_id` | string | `a1b2c3d4-...` o `""` | Solo Xero; `""` para Microsoft |
+| `access_token` | string | `eyJ0eXAiOiJKV1...` | Bearer token used for API calls |
+| `refresh_token` | string | `1/fFAGRNJru...` or `""` | `""` = absent (MS client_credentials has none) |
+| `expires_at` | ISO-8601 UTC | `2026-04-21T14:35:00+00:00` | Exact expiry timestamp |
+| `token_type` | string | `Bearer` | Always `Bearer` |
+| `scope` | string | `offline_access accounting.invoices` or `""` | `""` = absent |
+| `xero_tenant_id` | string | `a1b2c3d4-...` or `""` | Xero only; `""` for Microsoft |
 
-**TTL**: ninguno — persiste hasta revocación manual o re-autorización.
+**TTL**: none — persists until manual revocation or re-authorization.
 
-**Ejemplos de `connection_id`**:
-- `ms-default` (Microsoft, valor de `MS_DEFAULT_CONNECTION_ID`)
-- `xero-default`, `xero-prod`, cualquier string elegido al iniciar el OAuth
+**`connection_id` examples**:
+- `ms-default` (Microsoft, value of `MS_DEFAULT_CONNECTION_ID`)
+- `xero-default`, `xero-prod`, any string chosen when starting the OAuth flow
 
-**Consultar en Redis**:
+**Inspect in Redis**:
 ```bash
 docker compose exec redis redis-cli HGETALL token:xero-default
 docker compose exec redis redis-cli KEYS "token:*"
@@ -63,102 +63,102 @@ docker compose exec redis redis-cli KEYS "token:*"
 
 ### 2. `oauth:state:{state}` — String
 
-Mapeo temporal del parámetro `state` CSRF al `connection_id`, durante el callback OAuth de Xero.
+Temporary mapping of the CSRF `state` parameter to a `connection_id`, during the Xero OAuth callback.
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| Clave | `oauth:state:<uuid-aleatorio>` |
-| Valor | `connection_id` (ej: `xero-default`) |
+| Key | `oauth:state:<random-uuid>` |
+| Value | `connection_id` (e.g. `xero-default`) |
 | TTL | `OAUTH_STATE_TTL_SECONDS` (600 s = 10 min) |
 
-Se consume de forma atómica (WATCH/MULTI/EXEC) al recibir el callback. Si expira o ya fue consumido, el callback falla con error.
+Consumed atomically (WATCH/MULTI/EXEC) when the callback is received. If expired or already consumed, the callback fails with an error.
 
 ---
 
-### 3. `idempotency:{operacion}:{key}` — String (JSON)
+### 3. `idempotency:{operation}:{key}` — String (JSON)
 
-Caché de resultados de operaciones write para evitar duplicados en retries de OpenClaw.
+Cache of write operation results to prevent duplicates on OpenClaw retries.
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| Clave | `idempotency:<operacion>:<idempotency_key>` |
-| Valor | JSON con el resultado cacheado |
+| Key | `idempotency:<operation>:<idempotency_key>` |
+| Value | JSON with the cached result |
 | TTL | `IDEMPOTENCY_TTL_SECONDS` (86400 s = 24 h) |
 
-**Operaciones que usan idempotencia**:
+**Operations using idempotency**:
 
-| Prefijo operación | Qué cachea |
+| Operation prefix | What is cached |
 |---|---|
 | `idempotency:create_xero_invoice:{key}` | `{"invoice_id": "...", "status": "DRAFT"}` |
 | `idempotency:submit_xero_invoice:{key}` | `{"invoice_id": "...", "status": "AUTHORISED"}` |
 | `idempotency:void_xero_invoice:{key}` | `{"invoice_id": "...", "status": "VOIDED"}` |
-| `idempotency:send_teams_message:{key}` | resultado del envío |
+| `idempotency:send_teams_message:{key}` | Teams message send result |
 
 ---
 
 ### 4. `lock:refresh:{connection_id}` — String
 
-Lock distribuido para serializar el refresh de tokens. Evita que dos workers refresquen en paralelo con el mismo `refresh_token` (crítico para Xero por la rotación).
+Distributed lock to serialize token refreshes. Prevents two workers from refreshing concurrently with the same `refresh_token` (critical for Xero due to rotation).
 
-| Campo | Valor |
+| Field | Value |
 |---|---|
-| Clave | `lock:refresh:<connection_id>` |
-| Valor | UUID aleatorio del worker que adquirió el lock |
-| TTL | 30 s (auto-liberación si el worker muere) |
-| Reintentos | 5 intentos con 100 ms de espera entre cada uno |
+| Key | `lock:refresh:<connection_id>` |
+| Value | Random UUID of the worker that acquired the lock |
+| TTL | 30 s (auto-released if the worker dies) |
+| Retries | 5 attempts with 100 ms wait between each |
 
-El lock se libera con Lua script (SET NX + WATCH/DELETE) para garantizar que solo el propietario lo libere.
+Released via Lua script (SET NX + WATCH/DELETE) to guarantee only the owner can release it.
 
 ---
 
 ### 5. `approval:{approvalId}` — Hash
 
-Estado completo de una solicitud de aprobación de factura.
+Full state of an invoice approval request.
 
-| Campo Redis | Tipo | Ejemplo | Notas |
+| Redis field | Type | Example | Notes |
 |---|---|---|---|
-| `approval_id` | string | `appr-20260421-001` | Generado por OpenClaw |
-| `invoice_case_id` | string | `case-xyz-123` | Session key del agente OpenClaw |
-| `pdf_path` | string | `/storage/invoices/case-xyz-123.pdf` | Ruta al PDF, reenviada al webhook |
-| `invoice_number` | string | `BILL-0042` | Número de factura Xero (display) |
-| `supplier_name` | string | `Acme Corp` | Nombre del proveedor (display) |
-| `approve_url` | string | `https://…/approvals/…/approve` | URL generada por OpenClaw |
-| `reject_url` | string | `https://…/approvals/…/reject` | URL generada por OpenClaw |
+| `approval_id` | string | `appr-20260421-001` | Generated by OpenClaw |
+| `invoice_case_id` | string | `case-xyz-123` | OpenClaw agent session key |
+| `pdf_path` | string | `/storage/invoices/case-xyz-123.pdf` | PDF path, forwarded verbatim to the webhook |
+| `invoice_number` | string | `BILL-0042` | Xero invoice number (display) |
+| `supplier_name` | string | `Acme Corp` | Supplier name (display) |
+| `approve_url` | string | `https://…/approvals/…/approve` | URL generated by OpenClaw |
+| `reject_url` | string | `https://…/approvals/…/reject` | URL generated by OpenClaw |
 | `status` | string | `pending` / `resolved` | Lifecycle state |
-| `decision` | string | `approved` / `needs_changes` / `rejected` o `""` | `""` mientras pending |
-| `note` | string | `"Please fix line 2"` o `""` | Obligatoria si `decision=needs_changes` |
+| `decision` | string | `approved` / `needs_changes` / `rejected` or `""` | `""` while pending |
+| `note` | string | `"Please fix line 2"` or `""` | Required when `decision=needs_changes` |
 | `created_at` | ISO-8601 UTC | `2026-04-21T10:00:00+00:00` | |
-| `decided_at` | ISO-8601 UTC o `""` | `2026-04-21T10:05:00+00:00` | `""` mientras pending |
-| `decision_source` | string | `web_form` o `""` | Quién tomó la decisión |
-| `webhook_sent_at` | ISO-8601 UTC o `""` | `2026-04-21T10:05:01+00:00` | `""` mientras pending |
-| `webhook_result` | string | `ok` o `HTTP 503` o `""` | Resultado de notificar a OpenClaw |
+| `decided_at` | ISO-8601 UTC or `""` | `2026-04-21T10:05:00+00:00` | `""` while pending |
+| `decision_source` | string | `web_form` or `""` | Who or what submitted the decision |
+| `webhook_sent_at` | ISO-8601 UTC or `""` | `2026-04-21T10:05:01+00:00` | `""` while pending |
+| `webhook_result` | string | `ok` or `HTTP 503` or `""` | Result of notifying OpenClaw |
 
-**TTL**: ninguno — los registros se retienen indefinidamente.
+**TTL**: none — records are retained indefinitely.
 
-**Compatibilidad retroactiva**: registros anteriores al refactor (que guardaban `status=approved` o `status=rejected`) se migran automáticamente en lectura: `status` se convierte a `resolved` y el valor antiguo se mueve a `decision`.
+**Backward compatibility**: records written before the refactor (with `status=approved` or `status=rejected`) are migrated on read: `status` is promoted to `resolved` and the old value is moved to `decision`.
 
 ---
 
-## Flujo de datos: creación de factura Xero
+## Data flow: Xero invoice creation
 
 ```
 OpenClaw → POST /v1/xero/invoices
          → idempotency check (Redis: idempotency:create_xero_invoice:{key})
          → XeroTokenManager.get_valid_token(connection_id)
                → Redis HGETALL token:{connection_id}
-               → si expira en < 300s: lock:refresh:{connection_id} → OAuth refresh → Redis HSET
+               → if expiring in < 300s: lock:refresh:{connection_id} → OAuth refresh → Redis HSET
          → POST https://api.xero.com/api.xro/2.0/Invoices  (Type: ACCPAY)
-         → valida que Xero devuelva Type=ACCPAY
+         → validate Xero response Type=ACCPAY
          → Redis SET idempotency:create_xero_invoice:{key}  (TTL 86400s)
 ```
 
-## Flujo de datos: aprobación de factura
+## Data flow: invoice approval
 
 ```
 OpenClaw → POST /internal/approvals/register
          → Redis HSET approval:{approvalId}  (status=pending)
 
-Usuario  → GET  /approvals/{id}/reject  →  página con dropdown
+User     → GET  /approvals/{id}/reject  →  page with dropdown
          → POST /approvals/{id}/decision (decision=needs_changes|rejected, note=...)
          → Redis HSET approval:{approvalId}  (status=resolved, decision=..., note=...)
          → POST {OPENCLAW_WEBHOOK_URL}/hooks/agent  (action=..., note=...)
