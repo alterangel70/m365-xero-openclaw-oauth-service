@@ -40,6 +40,10 @@ _OP_CREATE_INVOICE = "create_xero_invoice"
 _OP_SUBMIT_INVOICE = "submit_xero_invoice"
 _OP_VOID_INVOICE = "void_xero_invoice"
 
+# Invoice statuses that mean the invoice no longer exists in a usable form.
+# If a cached invoice_id resolves to one of these, the cache entry is stale.
+_INVALID_INVOICE_STATUSES = frozenset({"DELETED", "VOIDED"})
+
 
 _INVOICE_TYPE = "ACCPAY"  # Bills / Purchases only. ACCREC (Sales) is never created here.
 
@@ -110,11 +114,31 @@ class CreateXeroDraftInvoice:
 
         cached = await self._idempotency_store.get(idem_key)
         if cached:
-            logger.debug("Idempotency cache hit for key %r", idempotency_key)
-            return XeroInvoiceResult(
-                invoice_id=cached["invoice_id"],
-                status=cached["status"],
+            cached_invoice_id = cached["invoice_id"]
+            try:
+                verification = await self._xero_client.get_invoice(
+                    connection_id=connection_id,
+                    invoice_id=cached_invoice_id,
+                )
+                live_status: str | None = verification["Invoices"][0]["Status"]
+            except ProviderUnavailableError:
+                live_status = None
+
+            if live_status is not None and live_status not in _INVALID_INVOICE_STATUSES:
+                logger.debug("Idempotency cache hit for key %r", idempotency_key)
+                return XeroInvoiceResult(
+                    invoice_id=cached_invoice_id,
+                    status=cached["status"],
+                )
+
+            logger.warning(
+                "Idempotency cache hit for %r but invoice %r has status %r — "
+                "invalidating cache entry and re-creating invoice",
+                idempotency_key,
+                cached_invoice_id,
+                live_status,
             )
+            # Fall through: create a new invoice and overwrite the stale cache entry.
 
         payload = {"Invoices": [_invoice_payload(invoice)]}
         response = await self._xero_client.create_invoice(

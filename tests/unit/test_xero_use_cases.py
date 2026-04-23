@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.core.domain.xero import XeroInvoice, XeroLineItem
+from app.core.errors import ProviderUnavailableError
 from app.core.use_cases.results import XeroInvoiceResult
 from app.core.use_cases.xero import (
     CreateXeroDraftInvoice,
@@ -47,8 +48,10 @@ def _make_invoice() -> XeroInvoice:
     )
 
 
-def _xero_response(invoice_id: str = INVOICE_ID, status: str = "DRAFT") -> dict:
-    return {"Invoices": [{"InvoiceID": invoice_id, "Status": status}]}
+def _xero_response(
+    invoice_id: str = INVOICE_ID, status: str = "DRAFT", type_: str = "ACCPAY"
+) -> dict:
+    return {"Invoices": [{"InvoiceID": invoice_id, "Status": status, "Type": type_}]}
 
 
 @pytest.fixture
@@ -108,7 +111,7 @@ async def test_create_invoice_payload_has_correct_structure(
 
     payload = mock_xero_client.create_invoice.call_args.kwargs["payload"]
     inv = payload["Invoices"][0]
-    assert inv["Type"] == "ACCREC"
+    assert inv["Type"] == "ACCPAY"
     assert inv["Status"] == "DRAFT"
     assert inv["Contact"]["ContactID"] == "contact-1"
     assert inv["LineItems"][0]["Description"] == "Consulting"
@@ -122,6 +125,9 @@ async def test_create_invoice_cache_hit_skips_client(
         "invoice_id": "cached-id",
         "status": "DRAFT",
     }
+    mock_xero_client.get_invoice.return_value = _xero_response(
+        invoice_id="cached-id", status="DRAFT"
+    )
 
     result = await create_use_case.execute(
         connection_id=CONNECTION_ID,
@@ -130,7 +136,60 @@ async def test_create_invoice_cache_hit_skips_client(
     )
 
     assert result.invoice_id == "cached-id"
+    mock_xero_client.get_invoice.assert_awaited_once_with(
+        connection_id=CONNECTION_ID, invoice_id="cached-id"
+    )
     mock_xero_client.create_invoice.assert_not_awaited()
+
+
+@pytest.mark.parametrize("stale_status", ["DELETED", "VOIDED"])
+async def test_create_invoice_cache_hit_stale_status_recreates(
+    create_use_case, mock_idempotency_store, mock_xero_client, stale_status
+):
+    """When the cached invoice is DELETED or VOIDED, a new invoice must be created."""
+    mock_idempotency_store.get.return_value = {
+        "invoice_id": "stale-id",
+        "status": stale_status,
+    }
+    mock_xero_client.get_invoice.return_value = _xero_response(
+        invoice_id="stale-id", status=stale_status
+    )
+    mock_xero_client.create_invoice.return_value = _xero_response(
+        invoice_id="new-id", status="DRAFT"
+    )
+
+    result = await create_use_case.execute(
+        connection_id=CONNECTION_ID,
+        invoice=_make_invoice(),
+        idempotency_key=IDEM_KEY,
+    )
+
+    mock_xero_client.create_invoice.assert_awaited_once()
+    assert result.invoice_id == "new-id"
+    assert result.status == "DRAFT"
+
+
+async def test_create_invoice_cache_hit_invoice_not_found_recreates(
+    create_use_case, mock_idempotency_store, mock_xero_client
+):
+    """When Xero returns an error for the cached invoice_id, a new invoice is created."""
+    mock_idempotency_store.get.return_value = {
+        "invoice_id": "missing-id",
+        "status": "DRAFT",
+    }
+    mock_xero_client.get_invoice.side_effect = ProviderUnavailableError("404")
+    mock_xero_client.create_invoice.return_value = _xero_response(
+        invoice_id="new-id", status="DRAFT"
+    )
+
+    result = await create_use_case.execute(
+        connection_id=CONNECTION_ID,
+        invoice=_make_invoice(),
+        idempotency_key=IDEM_KEY,
+    )
+
+    mock_xero_client.create_invoice.assert_awaited_once()
+    assert result.invoice_id == "new-id"
 
 
 async def test_create_invoice_stores_result_under_idempotency_key(
