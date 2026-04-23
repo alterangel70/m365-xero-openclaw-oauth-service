@@ -106,6 +106,27 @@ class TestOpenClawWebhookClient:
         assert "pdf_path=/invoices/case-001.pdf" in message
         assert "action=rejected" in message
 
+    async def test_message_includes_skill_preamble_when_note_present(self):
+        mock_http = AsyncMock()
+        mock_http.post = AsyncMock(return_value=_ok_response())
+
+        await _make_client(mock_http).notify_decision(
+            _APPROVAL, "needs_changes", note="Missing PO number"
+        )
+
+        message = mock_http.post.call_args.kwargs["json"]["message"]
+        assert "/home/ao/.openclaw/skills/m365-xero/SKILL.md" in message
+        assert message.index("SKILL.md") > message.index("Resume invoice")
+
+    async def test_message_excludes_skill_preamble_when_no_note(self):
+        mock_http = AsyncMock()
+        mock_http.post = AsyncMock(return_value=_ok_response())
+
+        await _make_client(mock_http).notify_decision(_APPROVAL, "approved")
+
+        message = mock_http.post.call_args.kwargs["json"]["message"]
+        assert "SKILL.md" not in message
+
     async def test_http_status_error_returns_error_string(self):
         error_response = MagicMock()
         error_response.status_code = 503

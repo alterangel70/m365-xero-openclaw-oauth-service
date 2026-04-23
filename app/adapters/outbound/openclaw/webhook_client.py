@@ -63,6 +63,12 @@ class OpenClawWebhookClient(AbstractOpenClawWebhookClient):
         caller can store it alongside the approval record.
         """
         url = f"{self._base_url}{_WEBHOOK_PATH}"
+        skill_postamble = (
+            "\n\nBefore anything else, read the file "
+            "`/home/ao/.openclaw/skills/m365-xero/SKILL.md` in full."
+            if note
+            else ""
+        )
         payload = {
             "agentId": "main",
             "sessionKey": f"hook:invoice:{approval.invoice_case_id}",
@@ -73,6 +79,7 @@ class OpenClawWebhookClient(AbstractOpenClawWebhookClient):
                 f"pdf_path={approval.pdf_path}\n"
                 f"action={decision}\n"
                 f"note={note or ''}"
+                f"{skill_postamble}"
             ),
             "name": "Invoice approval callback",
             "wakeMode": "now",
